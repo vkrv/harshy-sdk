@@ -1,4 +1,4 @@
-# Signumb SDK
+# Harshy SDK
 
 On-device driving quality analysis SDK (Android + iOS). Phone-only sensing. Source packages remain `@harshy/*` (`createHarshy`, `HarshyClient`).
 
@@ -36,7 +36,7 @@ pnpm test       # includes native Android JUnit (+ Swift HarshyMath on macOS)
 - `requestPermissions()` must not start capture. Trip GPS+IMU start in `start()` and stop in `stop()`.
 - Default `createHarshy()` is **manual**. `arm()` / `disarm()` are opt-in auto-trip.
 - `setUploadAdapter()` is optional. Nothing is uploaded until a host provides an adapter.
-- Pass `liveDisplayTitle` from the host app name. The SDK fallback is **Signumb**.
+- Pass `liveDisplayTitle` from the host app name. The SDK fallback is **Harshy**.
 - Docs and comments in this repo stay host-agnostic: no consumer app names, screens, or bundle IDs.
 
 ## Environment

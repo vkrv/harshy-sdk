@@ -13,7 +13,7 @@ class TripForegroundService : Service() {
     super.onCreate()
     // Must call startForeground promptly after startForegroundService or the OS kills the app.
     try {
-      val label = applicationInfo.loadLabel(packageManager)?.toString().orEmpty().ifBlank { "Signumb" }
+      val label = applicationInfo.loadLabel(packageManager)?.toString().orEmpty().ifBlank { "Harshy" }
       val payload = TripLiveDisplay.lastPayloadOrDefault(label).copy(title = label)
       val notification = TripLiveDisplay.buildNotification(this, payload)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

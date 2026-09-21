@@ -1,6 +1,6 @@
 # Documentation index
 
-Master registry for the Signumb SDK. Update this file when adding or changing a doc.
+Master registry for the Harshy SDK. Update this file when adding or changing a doc.
 
 ## Architecture
 

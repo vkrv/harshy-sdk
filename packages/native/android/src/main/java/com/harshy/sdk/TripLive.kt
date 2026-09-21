@@ -54,6 +54,6 @@ internal fun formatTripDuration(ms: Double): String {
 
 internal fun publishTripLive(context: android.content.Context, metrics: LiveMetrics) {
   val label = context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty()
-    .ifBlank { "Signumb" }
+    .ifBlank { "Harshy" }
   TripLiveDisplay.update(context, tripLivePayloadFromMetrics(metrics, label))
 }

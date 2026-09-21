@@ -1,6 +1,6 @@
 # @harshy/core
 
-Canonical on-device detector and session schema for the Signumb driving-quality SDK. Pure TypeScript: no React Native, no Expo.
+Canonical on-device detector and session schema for the Harshy driving-quality SDK. Pure TypeScript: no React Native, no Expo.
 
 Hosts should depend on [`@harshy/sdk`](../sdk) (JavaScript / Expo) or `HarshyClient` in [`@harshy/native`](../native) (Kotlin / Swift). Do not copy detector math into a host app.
 

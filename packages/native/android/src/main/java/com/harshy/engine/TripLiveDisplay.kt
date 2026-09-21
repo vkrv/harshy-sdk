@@ -61,7 +61,7 @@ object TripLiveDisplay {
   fun buildNotification(context: Context, payload: TripLivePayload): Notification {
     ensureChannel(context)
     val label = payload.title.ifBlank {
-      context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty().ifBlank { "Signumb" }
+      context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty().ifBlank { "Harshy" }
     }
     return NotificationCompat.Builder(context, CHANNEL_ID)
       .setContentTitle(label)

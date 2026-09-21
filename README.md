@@ -1,4 +1,4 @@
-# Signumb SDK
+# Harshy SDK
 
 On-device driving quality analysis for Android and iOS. Phone-only sensing — no external hardware.
 
@@ -26,7 +26,7 @@ Clone or submodule this repo next to the host (or vendor it inside the host). Th
 packages:
   - "apps/*"
   - "packages/*"
-  - "../signumb-sdk/packages/*"   # or vendor/signumb-sdk/packages/*
+  - "../harshy-sdk/packages/*"   # or vendor/harshy-sdk/packages/*
 ```
 
 ```bash
@@ -85,7 +85,7 @@ Include the host library (engine + client, no Expo):
 ```gradle
 // settings.gradle
 include ':harshy'
-project(':harshy').projectDir = new File(settingsDir, '../signumb-sdk/packages/native/android-host')
+project(':harshy').projectDir = new File(settingsDir, '../harshy-sdk/packages/native/android-host')
 ```
 
 ```gradle

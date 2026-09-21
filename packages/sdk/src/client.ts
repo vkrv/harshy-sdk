@@ -111,7 +111,7 @@ export type CreateHarshyDeps = {
    */
   historyStore?: JsonFileStore;
   maxHistory?: number;
-  /** App name on the trip notification / Live Activity. Defaults to Signumb. */
+  /** App name on the trip notification / Live Activity. Defaults to Harshy. */
   liveDisplayTitle?: string;
   /** Override metric formatting (for example imperial units). */
   formatLiveDisplay?: (metrics: LiveMetrics, title: string) => TripLiveDisplayPayload;
@@ -165,7 +165,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
   let sessionId: string | null = null;
   const listeners = new Set<HarshyListeners>();
   let lastLivePublishMs = 0;
-  const liveTitle = deps.liveDisplayTitle ?? "Signumb";
+  const liveTitle = deps.liveDisplayTitle ?? "Harshy";
   const formatLive =
     deps.formatLiveDisplay ?? ((metrics: LiveMetrics, title: string) => formatTripLiveDisplay(metrics, title));
   let nativeImuHz = mergeNativeStartOptions(deps.native).imuHz;

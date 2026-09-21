@@ -1,6 +1,6 @@
 # @harshy/sdk
 
-Plug-and-play JavaScript client for **Signumb** — on-device driving quality analysis. Hosts start a trip, subscribe to live GPS/IMU, metrics, and events, and receive a versioned `SessionExport` on stop. The npm package remains `@harshy/sdk`; the factory is `createHarshy()`.
+Plug-and-play JavaScript client for **Harshy** — on-device driving quality analysis. Hosts start a trip, subscribe to live GPS/IMU, metrics, and events, and receive a versioned `SessionExport` on stop. The npm package is `@harshy/sdk`; the factory is `createHarshy()`.
 
 Detection (harsh events, speeding, jerk, road RMS, possible impact, phone handheld) runs in `@harshy/core` inside this client. Do not reimplement detector math in the host app.
 
@@ -29,7 +29,7 @@ Packages are not published to npm yet. Add this repository to the **host pnpm wo
 # pnpm-workspace.yaml (host)
 packages:
   - "."
-  - "../signumb-sdk/packages/*"
+  - "../harshy-sdk/packages/*"
 ```
 
 ```bash
@@ -669,7 +669,7 @@ type CreateHarshyDeps = {
   native?: Partial<NativeStartOptions>;     // Default native options
   historyStore?: JsonFileStore;      // Persist trips locally
   maxHistory?: number;               // Max trips to keep (default: 100)
-  liveDisplayTitle?: string;         // Notification title (default: Signumb)
+  liveDisplayTitle?: string;         // Notification title (default: Harshy)
   formatLiveDisplay?: (metrics, title) => TripLiveDisplayPayload;
 };
 ```

@@ -21,7 +21,7 @@ Do not construct `HarshyClient` in the same process as the Expo module — both 
 ```gradle
 // settings.gradle
 include ':harshy'
-project(':harshy').projectDir = new File(settingsDir, '../signumb-sdk/packages/native/android-host')
+project(':harshy').projectDir = new File(settingsDir, '../harshy-sdk/packages/native/android-host')
 ```
 
 ```gradle

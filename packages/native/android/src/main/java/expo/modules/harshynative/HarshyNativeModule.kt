@@ -96,7 +96,7 @@ class HarshyNativeModule : Module() {
         ?: appContext.currentActivity?.applicationContext
         ?: return@AsyncFunction
       val label = context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty()
-        .ifBlank { "Signumb" }
+        .ifBlank { "Harshy" }
       com.harshy.engine.TripLiveDisplay.update(
         context,
         com.harshy.sdk.tripLivePayloadFromMap(payload, label),

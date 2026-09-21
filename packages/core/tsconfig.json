@@ -1,0 +1,10 @@
+{
+  "extends": "@harshy/config/typescript/node",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
+}

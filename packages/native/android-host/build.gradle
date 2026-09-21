@@ -1,0 +1,38 @@
+plugins {
+  id "com.android.library"
+  id "org.jetbrains.kotlin.android"
+}
+
+android {
+  namespace "com.harshy"
+  compileSdk 36
+  defaultConfig {
+    minSdk 24
+    consumerProguardFiles "consumer-rules.pro"
+  }
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+  sourceSets {
+    main {
+      java.srcDirs = ["../android/src/main/java/com/harshy"]
+      res.srcDirs = ["../android/src/main/res"]
+      manifest.srcFile "../android/src/main/AndroidManifest.xml"
+    }
+    test {
+      java.srcDirs = ["../android/src/test/java"]
+    }
+  }
+  testOptions {
+    unitTests.returnDefaultValues = true
+  }
+}
+
+dependencies {
+  implementation "androidx.core:core-ktx:1.16.0"
+  testImplementation "junit:junit:4.13.2"
+}

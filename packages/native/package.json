@@ -1,0 +1,34 @@
+{
+  "name": "@harshy/native",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native GPS/IMU engine, Kotlin/Swift HarshyClient, and Expo/React Native bridge",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./app.plugin.js": "./app.plugin.js"
+  },
+  "scripts": {
+    "lint": "eslint src/",
+    "test": "node ./scripts/run-android-unit-tests.mjs && node ./scripts/run-ios-unit-tests.mjs",
+    "test:android": "node ./scripts/run-android-unit-tests.mjs",
+    "test:ios": "node ./scripts/run-ios-unit-tests.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": ["react-native", "expo", "harshy", "sensors"],
+  "license": "MIT",
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  },
+  "dependencies": {
+    "@harshy/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@harshy/config": "workspace:*",
+    "expo": "~57.0.21",
+    "typescript": "6.0.3"
+  }
+}

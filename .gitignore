@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Native Android unit runner
+packages/native/android-unit/local.properties
+packages/native/android-unit/.gradle/
+packages/native/android-unit/**/build/
+packages/native/android-host/build/
+packages/native/.build/
+packages/native/.swiftpm/
+packages/native/HarshyMath/.build/
+packages/native/HarshyMath/.swiftpm/
+
+# Misc
+*.pem
+.cache/

@@ -1,0 +1,9 @@
+packages:
+  - "packages/*"
+
+nodeLinker: hoisted
+verifyDepsBeforeRun: false
+
+overrides:
+  react: 19.2.3
+  react-native: 0.86.3

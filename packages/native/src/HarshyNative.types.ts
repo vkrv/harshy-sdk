@@ -35,6 +35,10 @@ export type HarshyNativeModuleApi = {
   getCapabilities(): Promise<SensorCapabilities>;
   getPermissionStatus(): Promise<PermissionResult>;
   requestPermissions(): Promise<PermissionResult>;
+  /** One permission. Host must explain that permission in the app first. */
+  requestPermission(kind: keyof PermissionResult): Promise<PermissionResult>;
+  /** Background / Always location. Host must show a prominent disclosure first. */
+  requestBackgroundLocation(): Promise<PermissionResult>;
   start(options: NativeStartOptions): Promise<void>;
   /** Foreground GPS+IMU readout. Not a trip — no FGS / journal / running. */
   startPreview(options: NativeStartOptions): Promise<void>;

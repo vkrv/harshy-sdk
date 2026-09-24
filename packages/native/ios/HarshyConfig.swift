@@ -25,8 +25,8 @@ public struct HarshyDetectorScoreWeights: Equatable, Sendable {
     speeding: Double = 4,
     jerk: Double = 3,
     compound: Double = 3,
-    refDistanceKm: Double = 10,
-    refDurationMin: Double = 15,
+    refDistanceKm: Double = 5,
+    refDurationMin: Double = 10,
     minDistanceKm: Double = 2,
     minDurationMin: Double = 5
   ) {

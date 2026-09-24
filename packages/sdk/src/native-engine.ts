@@ -43,6 +43,12 @@ export function createNativeEngine(): SensorEngine {
     async requestPermissions() {
       return HarshyNative.requestPermissions();
     },
+    async requestPermission(kind) {
+      return HarshyNative.requestPermission(kind);
+    },
+    async requestBackgroundLocation() {
+      return HarshyNative.requestBackgroundLocation();
+    },
     async start(options: NativeStartOptions) {
       await HarshyNative.start(mergeNativeStartOptions(options));
     },

@@ -75,6 +75,16 @@ public final class HarshyClient: HarshyEngine.Listener {
     engine.requestPermissions(completion: completion)
   }
 
+  /// One permission. Hosts explain that permission in the app before calling this.
+  public func requestPermission(kind: String, completion: @escaping ([String: String]) -> Void) {
+    engine.requestPermission(kind: kind, completion: completion)
+  }
+
+  /// Always location. Hosts must show a prominent in-app disclosure first.
+  public func requestBackgroundLocation(completion: @escaping ([String: String]) -> Void) {
+    engine.requestBackgroundLocation(completion: completion)
+  }
+
   public func start(
     native: HarshyNativeStartOptions = HarshyNativeStartOptions(),
     detector: HarshyDetectorConfig? = nil,

@@ -167,7 +167,7 @@ await HarshyNative.requestPermissions();
 await HarshyNative.start({ imuHz: 50, locationIntervalMs: 500, background: true });
 ```
 
-`requestPermissions()` resolves after the user answers the system dialogs (when-in-use then Always on iOS; fine then background location on Android). It does not start GPS or IMU. `start()` throws if location is still denied.
+`requestPermissions()` resolves after the user answers the foreground dialogs (when-in-use on iOS; fine/coarse, notifications, and activity on Android). It does not request background location and does not start GPS or IMU. `requestPermission(kind)` asks for one permission. `requestBackgroundLocation()` is Always / `ACCESS_BACKGROUND_LOCATION`. The host explains that permission in the app before either call. `start()` throws if location is still denied.
 
 Add the config plugin so permissions, the Android foreground service, and MainActivity `configChanges` are merged:
 

@@ -79,6 +79,19 @@ describe("trip start heuristic", () => {
     expect(state.distanceM).toBeGreaterThanOrEqual(DEFAULT_TRIP_HEURISTIC_CONFIG.commitDistanceM);
   });
 
+  it("counts 10 km/h as driving speed", () => {
+    const gate = 10 / 3.6;
+    expect(DEFAULT_TRIP_HEURISTIC_CONFIG.startSpeedMps).toBeCloseTo(gate);
+    const slow = shouldStartTrip(emptyTripStartState(), east(0, 0, gate - 0.05));
+    const reset = shouldStartTrip(slow.state, east(1_000, 10, gate - 0.05));
+    expect(reset.state.movingSinceMs).toBeNull();
+    expect(reset.state.distanceM).toBe(0);
+    const moving = shouldStartTrip(emptyTripStartState(), east(0, 0, gate));
+    const kept = shouldStartTrip(moving.state, east(1_000, 10, gate));
+    expect(kept.state.movingSinceMs).toBe(0);
+    expect(kept.state.distanceM).toBeGreaterThan(0);
+  });
+
   it("resets when speed drops below the start gate", () => {
     let state = emptyTripStartState();
     state = shouldStartTrip(state, east(0, 0)).state;

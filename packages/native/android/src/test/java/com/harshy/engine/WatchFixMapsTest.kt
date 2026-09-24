@@ -19,6 +19,14 @@ class WatchFixMapsTest {
       "walking",
       WatchFixMaps.activityFromSteps(10_000L, 9_500L, 1.0),
     )
+    assertEquals(
+      "unknown",
+      WatchFixMaps.activityFromSteps(10_000L, 9_500L, 10.0 / 3.6),
+    )
+    assertEquals(
+      "walking",
+      WatchFixMaps.activityFromSteps(10_000L, 9_500L, 10.0 / 3.6 - 0.1),
+    )
   }
 
   @Test

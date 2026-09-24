@@ -6,7 +6,7 @@
 
 | Signal | Android | iOS | Use |
 |--------|---------|-----|-----|
-| GPS (lat/lon, speed, course, accuracy) | `LocationManager` **GPS first**, plus platform `FUSED_PROVIDER` (API 31+, high-accuracy `LocationRequest`, always registered — do not trust `getAllProviders` / `isProviderEnabled` for fused) and `NETWORK_PROVIDER`. Analyzer uses fused/network only when GPS is off, still searching, or silent >8 s. Searching GPS is not journaled when fused is registered. `getLastKnownLocation` older than 30 s is not seeded | `CLLocationManager` (already fused) | Speed, path, longitudinal/lateral accel, live heading |
+| GPS (lat/lon, speed, course, accuracy) | `LocationManager` **GPS first**, plus platform `FUSED_PROVIDER` (API 31+, high-accuracy `LocationRequest`, always registered — do not trust `getAllProviders` / `isProviderEnabled` for fused) and `NETWORK_PROVIDER`. Each provider gets a **new** `LocationListener` every time capture starts (`LocationFeeds`) so a later trip is not stuck on a listener Android already unregistered. Trip registration runs on the main thread, asks GPS and fused for a current fix, and rebinds once if no sample arrives. Analyzer uses fused/network only when GPS is off, still searching, or silent >8 s. Searching GPS is journaled until a usable lock exists, then dropped while that lock is fresh when fused is registered. `getLastKnownLocation` older than 30 s is not seeded | `CLLocationManager` (already fused) | Speed, path, longitudinal/lateral accel, live heading |
 | Accelerometer | `TYPE_ACCELEROMETER` | `CMDeviceMotion` | Raw accel including gravity |
 | Linear acceleration | `TYPE_LINEAR_ACCELERATION` | userAcceleration | IMU magnitude / jerk fallback / road RMS / possible impact |
 | Gravity | `TYPE_GRAVITY` | gravity | World-up axis for [road quality](../features/road-quality.md) and possible-impact vertical / rollover |
@@ -47,10 +47,12 @@ Automatic trips need a third lifecycle that is **not a trip**: `disarmed` | `arm
 | `motion` | `CMMotionActivityManager` when available | `ACTIVITY_RECOGNITION` (API 29+; granted below 29) | No |
 | `notifications` | Always `granted` | `POST_NOTIFICATIONS` (API 33+; granted below 33) | No — needed to show the trip FGS notice |
 
-`requestPermissions()` **waits for the system dialog** before resolving:
+`requestPermissions()` **waits for the system dialog** before resolving. It asks for foreground permissions only:
 
-1. iOS: when-in-use, then Always (once per install). Then a one-shot motion-activity query if that status is still not determined.
-2. Android: fine + coarse (+ notifications on 13+, `ACTIVITY_RECOGNITION` on 10+), then background location as a **second** prompt (required on API 29+).
+1. iOS: when-in-use, then a one-shot motion-activity query if that status is still not determined.
+2. Android: fine + coarse (+ notifications on 13+, `ACTIVITY_RECOGNITION` on 10+).
+
+`requestPermission(kind)` asks for one permission. `requestBackgroundLocation()` is Always / `ACCESS_BACKGROUND_LOCATION` (API 29+). The host explains that permission in the app before either call.
 
 Do not return the pre-prompt status and start capture in the same turn. `start()` throws if `location` is not granted; it does not prompt.
 

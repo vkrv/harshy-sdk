@@ -22,10 +22,12 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.util.Log
 import androidx.core.content.ContextCompat
 import java.util.ArrayDeque
 import java.util.Collections
 import java.util.UUID
+import java.util.function.Consumer
 
 /**
  * Standalone driving-sensor engine. Host apps (including non-React Native)
@@ -71,18 +73,23 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   @Volatile private var watching = false
   @Volatile private var lastStepAtMs: Long? = null
   private var significantListener: TriggerEventListener? = null
-
-  private val watchLocationListener = object : LocationListener {
-    override fun onLocationChanged(location: Location) {
-      emitWatchFix(location)
+  private val tripFeeds = LocationFeeds()
+  private val watchFeeds = LocationFeeds()
+  private val watchSingleListeners = mutableListOf<LocationListener>()
+  private val mainHandler = Handler(Looper.getMainLooper())
+  private var locationBindGen = 0
+  private var locationRebindArmed = false
+  private val locationRebind = Runnable {
+    synchronized(lifecycleLock) {
+      locationRebindArmed = false
+      if (!running && !previewing) {
+        return@synchronized
+      }
+      if (synchronized(locationLock) { locationSamples.isNotEmpty() }) {
+        return@synchronized
+      }
+      bindTripLocationLocked()
     }
-
-    @Deprecated("Deprecated in Android")
-    override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
-
-    override fun onProviderEnabled(provider: String) = Unit
-
-    override fun onProviderDisabled(provider: String) = Unit
   }
   private var sessionId: String? = null
   private var startedAtMs: Long = 0
@@ -243,7 +250,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     }
   }
 
-  /** Stop a foreground sensor readout. No-op during a trip. Leaves an armed watch in place. */
+  /** Stop a Sensors-tab readout. No-op during a trip. Leaves an armed watch in place. */
   fun stopPreview() {
     synchronized(lifecycleLock) {
       if (!previewing) {
@@ -341,6 +348,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       journalThread = null
       journalHandler = null
       sensorManager.unregisterListener(this)
+      cancelTripLocationLocked()
+      unbindLocationFeeds(tripFeeds)
       try {
         locationManager.removeUpdates(this)
       } catch (_: Exception) {
@@ -428,32 +437,17 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   private fun startWatchLocked() {
     // Caller holds lifecycleLock. Sparse GPS + fused/network backup + significant-motion.
     lastGpsFixAtMs = null
-    requestLocationProvider(
-      LocationManager.GPS_PROVIDER,
+    bindLocationFeeds(
+      watchFeeds,
+      listOfNotNull(
+        LocationManager.GPS_PROVIDER,
+        fusedProvider(),
+        LocationManager.NETWORK_PROVIDER,
+        LocationManager.PASSIVE_PROVIDER,
+      ),
       WatchFixMaps.WATCH_MIN_TIME_MS,
       WatchFixMaps.WATCH_MIN_DISTANCE_M,
-      watchLocationListener,
-    )
-    fusedProvider()?.let {
-      requestLocationProvider(
-        it,
-        WatchFixMaps.WATCH_MIN_TIME_MS,
-        WatchFixMaps.WATCH_MIN_DISTANCE_M,
-        watchLocationListener,
-      )
-    }
-    requestLocationProvider(
-      LocationManager.NETWORK_PROVIDER,
-      WatchFixMaps.WATCH_MIN_TIME_MS,
-      WatchFixMaps.WATCH_MIN_DISTANCE_M,
-      watchLocationListener,
-    )
-    requestLocationProvider(
-      LocationManager.PASSIVE_PROVIDER,
-      WatchFixMaps.WATCH_MIN_TIME_MS,
-      WatchFixMaps.WATCH_MIN_DISTANCE_M,
-      watchLocationListener,
-    )
+    ) { emitWatchFix(it) }
     emitLastKnownWatchFix()
     stepDetector?.let {
       sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL)
@@ -468,10 +462,9 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     watching = false
     lastStepAtMs = null
     lastGpsFixAtMs = null
-    try {
-      locationManager.removeUpdates(watchLocationListener)
-    } catch (_: Exception) {
-    }
+    unbindLocationFeeds(watchFeeds)
+    removeLocationUpdates(watchSingleListeners.toList())
+    watchSingleListeners.clear()
     val trigger = significantListener
     val motionSensor = significantMotion
     if (trigger != null && motionSensor != null) {
@@ -503,11 +496,25 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
 
   @SuppressLint("MissingPermission")
   private fun requestWatchSingleFix() {
-    try {
-      requestSingleUpdate(LocationManager.GPS_PROVIDER, watchLocationListener)
-      fusedProvider()?.let { requestSingleUpdate(it, watchLocationListener) }
-      requestSingleUpdate(LocationManager.NETWORK_PROVIDER, watchLocationListener)
-    } catch (_: Exception) {
+    val providers = listOfNotNull(
+      LocationManager.GPS_PROVIDER,
+      fusedProvider(),
+      LocationManager.NETWORK_PROVIDER,
+    )
+    val listeners = providers.map { ForwardingLocationListener { emitWatchFix(it) } }
+    val armed = synchronized(lifecycleLock) {
+      if (!watching || running) {
+        false
+      } else {
+        watchSingleListeners.addAll(listeners)
+        true
+      }
+    }
+    if (!armed) {
+      return
+    }
+    for ((provider, listener) in providers.zip(listeners)) {
+      requestSingleUpdate(provider, listener)
     }
   }
 
@@ -576,6 +583,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     samplerThread = null
     samplerHandler = null
     unregisterTripSensors()
+    cancelTripLocationLocked()
+    unbindLocationFeeds(tripFeeds)
     try {
       locationManager.removeUpdates(this)
     } catch (_: Exception) {
@@ -621,11 +630,87 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
 
   @SuppressLint("MissingPermission")
   private fun startLocation() {
-    val minTime = locationIntervalMs
-    requestLocationProvider(LocationManager.GPS_PROVIDER, minTime, 0f, this)
-    fusedProvider()?.let { requestLocationProvider(it, minTime, 0f, this) }
-    requestLocationProvider(LocationManager.NETWORK_PROVIDER, minTime, 0f, this)
+    val gen = ++locationBindGen
+    mainHandler.post {
+      synchronized(lifecycleLock) {
+        if (gen != locationBindGen || (!running && !previewing)) {
+          return@synchronized
+        }
+        bindTripLocationLocked()
+      }
+    }
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun bindTripLocationLocked() {
+    // Caller holds lifecycleLock. Registration stays on the main thread.
+    bindLocationFeeds(
+      tripFeeds,
+      listOfNotNull(
+        LocationManager.GPS_PROVIDER,
+        fusedProvider(),
+        LocationManager.NETWORK_PROVIDER,
+      ),
+      locationIntervalMs,
+      0f,
+    ) { onLocationChanged(it) }
     emitLastKnownTripFix()
+    kickCurrentFix()
+    if (!locationRebindArmed && synchronized(locationLock) { locationSamples.isEmpty() }) {
+      locationRebindArmed = true
+      mainHandler.postDelayed(locationRebind, LOCATION_REBIND_MS)
+    }
+  }
+
+  private fun cancelTripLocationLocked() {
+    locationBindGen += 1
+    locationRebindArmed = false
+    mainHandler.removeCallbacks(locationRebind)
+  }
+
+  @SuppressLint("MissingPermission")
+  private fun kickCurrentFix() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+      return
+    }
+    val deliver = Consumer<Location> { location ->
+      if (location != null) {
+        onLocationChanged(location)
+      }
+    }
+    for (provider in listOfNotNull(LocationManager.GPS_PROVIDER, fusedProvider())) {
+      try {
+        locationManager.getCurrentLocation(provider, null, context.mainExecutor, deliver)
+      } catch (error: Exception) {
+        Log.w(TAG, "current fix failed for $provider", error)
+      }
+    }
+  }
+
+  private fun bindLocationFeeds(
+    feeds: LocationFeeds,
+    providers: List<String>,
+    minTime: Long,
+    minDistance: Float,
+    onLocation: (Location) -> Unit,
+  ) {
+    val previous = feeds.open(providers, { provider, listener ->
+      requestLocationProvider(provider, minTime, minDistance, listener)
+    }, onLocation)
+    removeLocationUpdates(previous)
+  }
+
+  private fun unbindLocationFeeds(feeds: LocationFeeds) {
+    removeLocationUpdates(feeds.close())
+  }
+
+  private fun removeLocationUpdates(listeners: List<LocationListener>) {
+    for (listener in listeners) {
+      try {
+        locationManager.removeUpdates(listener)
+      } catch (_: Exception) {
+      }
+    }
   }
 
   private fun fusedProvider(): String? {
@@ -649,7 +734,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     minTime: Long,
     minDistance: Float,
     listener: LocationListener,
-  ) {
+  ): Boolean {
     try {
       if (
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
@@ -666,7 +751,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
           context.mainExecutor,
           listener,
         )
-        return
+        return true
       }
       locationManager.requestLocationUpdates(
         provider,
@@ -675,9 +760,10 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
         listener,
         Looper.getMainLooper(),
       )
-    } catch (_: SecurityException) {
-    } catch (_: IllegalArgumentException) {
-    } catch (_: Exception) {
+      return true
+    } catch (error: Exception) {
+      Log.w(TAG, "location register failed for $provider", error)
+      return false
     }
   }
 
@@ -839,6 +925,12 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
 
   override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
 
+  override fun onLocationChanged(locations: MutableList<Location>) {
+    for (location in locations) {
+      onLocationChanged(location)
+    }
+  }
+
   override fun onLocationChanged(location: Location) {
     if (!running && !previewing) {
       return
@@ -852,6 +944,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     }
     if (previewing && !running) {
       listener?.onLocation(location.toSampleMap())
+      noteTripFixArrived()
       return
     }
     val raw = location.toSampleMap()
@@ -884,6 +977,15 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       }
     }
     listener?.onLocation(sample)
+    noteTripFixArrived()
+  }
+
+  private fun noteTripFixArrived() {
+    if (!locationRebindArmed) {
+      return
+    }
+    locationRebindArmed = false
+    mainHandler.removeCallbacks(locationRebind)
   }
 
   @Deprecated("Deprecated in Android")
@@ -1005,6 +1107,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   companion object {
+    private const val TAG = "HarshyEngine"
+    private const val LOCATION_REBIND_MS = 4_000L
     @Volatile private var instance: HarshyEngine? = null
 
     @JvmStatic

@@ -106,14 +106,15 @@ const status = await harshy.requestPermissions();
 
 | Permission | iOS | Android |
 |------------|-----|---------|
-| `location` | When In Use → Always | Fine/Coarse location |
-| `backgroundLocation` | Always (second prompt) | Background location |
+| `location` | When In Use | Fine/Coarse location |
+| `backgroundLocation` | Always via `requestPermission("backgroundLocation")` | Background location, same call |
 | `motion` | Motion & Fitness | Not required |
 | `notifications` | Not required | Android 13+ notification |
 
 **Rules:**
 
-- `requestPermissions()` only prompts; it does not start GPS or IMU
+- `requestPermissions()` prompts for foreground location, motion, and notifications only. It does not start GPS or IMU
+- `requestPermission(kind)` and `requestBackgroundLocation()` ask for one permission. Background location is not part of `requestPermissions()`
 - `start()` throws if `location` is not `"granted"`
 - Background recording requires `backgroundLocation: "granted"` (enabled by default with `background: true`)
 
@@ -681,7 +682,9 @@ type CreateHarshyDeps = {
 | `getState()` | Get current client state |
 | `getCapabilities()` | Get sensor capabilities |
 | `getPermissionStatus()` | Get current permission status |
-| `requestPermissions()` | Show permission dialogs, return result |
+| `requestPermissions()` | Show foreground permission dialogs, return result |
+| `requestPermission(kind)` | Show one permission dialog after the host explains it |
+| `requestBackgroundLocation()` | Always / background location prompt |
 | `start(options?)` | Start recording a trip |
 | `startPreview(options?)` | Foreground GPS/IMU readout (not a trip) |
 | `stopPreview()` | Stop that readout; does not stop a running trip |

@@ -25,41 +25,19 @@ class HarshyNativeModule : Module() {
     }
 
     AsyncFunction("requestPermissions") { promise: Promise ->
-      val manager = appContext.permissions
-      if (manager == null) {
-        promise.reject(
-          "E_NO_PERMISSIONS",
-          "Permissions module is null. Are you sure all the installed Expo modules are properly linked?",
-          null,
-        )
+      ask(promise, foregroundPermissions())
+    }
+
+    AsyncFunction("requestPermission") { kind: String, promise: Promise ->
+      if (kind == "backgroundLocation") {
+        requestBackground(promise)
         return@AsyncFunction
       }
-      val foreground = mutableListOf(
-        Manifest.permission.ACCESS_FINE_LOCATION,
-        Manifest.permission.ACCESS_COARSE_LOCATION,
-      )
-      if (Build.VERSION.SDK_INT >= 33) {
-        foreground.add(Manifest.permission.POST_NOTIFICATIONS)
-      }
-      if (Build.VERSION.SDK_INT >= 29) {
-        foreground.add(Manifest.permission.ACTIVITY_RECOGNITION)
-      }
-      manager.askForPermissions(
-        PermissionsResponseListener {
-          val fineGranted = engine().permissionStatus()["location"] == "granted"
-          if (Build.VERSION.SDK_INT >= 29 && fineGranted) {
-            manager.askForPermissions(
-              PermissionsResponseListener {
-                promise.resolve(engine().permissionStatus())
-              },
-              Manifest.permission.ACCESS_BACKGROUND_LOCATION,
-            )
-          } else {
-            promise.resolve(engine().permissionStatus())
-          }
-        },
-        *foreground.toTypedArray(),
-      )
+      ask(promise, permissionsFor(kind))
+    }
+
+    AsyncFunction("requestBackgroundLocation") { promise: Promise ->
+      requestBackground(promise)
     }
 
     AsyncFunction("start") { options: Map<String, Any?> ->
@@ -146,5 +124,60 @@ class HarshyNativeModule : Module() {
     // Journal resume runs from TripForegroundService and explicit isRunning/start/recover paths.
     engine = created
     return created
+  }
+
+  private fun foregroundPermissions(): List<String> {
+    val foreground = mutableListOf(
+      Manifest.permission.ACCESS_FINE_LOCATION,
+      Manifest.permission.ACCESS_COARSE_LOCATION,
+    )
+    foreground.addAll(permissionsFor("notifications"))
+    foreground.addAll(permissionsFor("motion"))
+    return foreground
+  }
+
+  private fun permissionsFor(kind: String): List<String> {
+    return when (kind) {
+      "location" -> listOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+      )
+      "notifications" ->
+        if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
+      "motion" ->
+        if (Build.VERSION.SDK_INT >= 29) listOf(Manifest.permission.ACTIVITY_RECOGNITION) else emptyList()
+      else -> emptyList()
+    }
+  }
+
+  private fun ask(promise: Promise, permissions: List<String>) {
+    val manager = appContext.permissions
+    if (manager == null) {
+      promise.reject(
+        "E_NO_PERMISSIONS",
+        "Permissions module is null. Are you sure all the installed Expo modules are properly linked?",
+        null,
+      )
+      return
+    }
+    if (permissions.isEmpty()) {
+      promise.resolve(engine().permissionStatus())
+      return
+    }
+    manager.askForPermissions(
+      PermissionsResponseListener {
+        promise.resolve(engine().permissionStatus())
+      },
+      *permissions.toTypedArray(),
+    )
+  }
+
+  private fun requestBackground(promise: Promise) {
+    val status = engine().permissionStatus()
+    if (Build.VERSION.SDK_INT < 29 || status["backgroundLocation"] == "granted" || status["location"] != "granted") {
+      promise.resolve(status)
+      return
+    }
+    ask(promise, listOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
   }
 }

@@ -78,9 +78,10 @@ internal object LocationFallback {
   }
 
   /**
-   * Accept a fix from [provider]. Usable GPS always. Searching GPS is dropped
-   * when [dropSearchingGps] (fused is registered) so a 250 m pre-fix cannot
-   * poison the path. Fused / network / passive / unnamed only when GPS is
+   * Accept a fix from [provider]. Usable GPS always. Searching GPS is kept
+   * until a usable lock exists, then dropped while that lock is fresh when
+   * [dropSearchingGps] (fused is registered), so a 250 m pre-fix cannot keep
+   * poisoning the path. Fused / network / passive / unnamed only when GPS is
    * disabled, has not produced a usable lock, or the last usable GPS fix is
    * older than [staleMs].
    */
@@ -95,7 +96,9 @@ internal object LocationFallback {
     dropSearchingGps: Boolean = false,
   ): Boolean {
     if (isGps(provider)) {
-      if (dropSearchingGps && !isUsableGnssFix(provider, accuracyM, hasSpeed)) {
+      val searching = dropSearchingGps && !isUsableGnssFix(provider, accuracyM, hasSpeed)
+      val lockFresh = lastGpsAtMs != null && nowMs - lastGpsAtMs <= staleMs
+      if (searching && lockFresh) {
         return false
       }
       return true

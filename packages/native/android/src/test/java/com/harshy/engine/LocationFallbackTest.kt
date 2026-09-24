@@ -169,11 +169,22 @@ class LocationFallbackTest {
 
   @Test
   fun searchingGpsDroppedWhenFusedIsRegistered() {
-    assertFalse(
+    assertTrue(
       LocationFallback.shouldAcceptFix(
         LocationManager.GPS_PROVIDER,
         nowMs = 10_000L,
         lastGpsAtMs = null,
+        gpsEnabled = true,
+        accuracyM = 250f,
+        hasSpeed = false,
+        dropSearchingGps = true,
+      ),
+    )
+    assertFalse(
+      LocationFallback.shouldAcceptFix(
+        LocationManager.GPS_PROVIDER,
+        nowMs = 10_000L,
+        lastGpsAtMs = 9_000L,
         gpsEnabled = true,
         accuracyM = 250f,
         hasSpeed = false,

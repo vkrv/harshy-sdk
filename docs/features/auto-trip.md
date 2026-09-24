@@ -78,9 +78,9 @@ Pure functions in `@harshy/core`: `shouldStartTrip` / `shouldEndTrip`. Native Mo
 
 | Key | Default | Role |
 |-----|---------|------|
-| `startSpeedMps` | **5.5** (~20 km/h) | Below typical walking; bikes can still exceed this |
+| `startSpeedMps` | **10 / 3.6** (10 km/h) | Above a typical walk. A bike can still exceed this |
 | `startDistanceM` | **40** | Distance while continuously above start speed to begin **warmup** |
-| `startHoldMs` | **5_000** | Time above start speed to begin warmup (~7 s at 20 km/h vs the old 20 s / 150 m start) |
+| `startHoldMs` | **5_000** | Time above start speed to begin warmup. At 10 km/h the 40 m distance takes about 14 s, so distance is the longer probe gate |
 | `commitDistanceM` | **150** | After warmup `start()`, distance at vehicle speed that **commits** (failed warmup is discarded) |
 | `commitHoldMs` | **20_000** | After warmup `start()`, time at vehicle speed that commits |
 | `endSpeedMps` | **2.5** | Dwell / stopped gate |

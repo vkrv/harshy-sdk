@@ -99,6 +99,10 @@ export type SensorEngine = {
   getCapabilities(): Promise<SensorCapabilities>;
   getPermissionStatus(): Promise<PermissionResult>;
   requestPermissions(): Promise<PermissionResult>;
+  /** One permission. Optional so older test doubles still compile. */
+  requestPermission?(kind: keyof PermissionResult): Promise<PermissionResult>;
+  /** Background / Always location. Optional so older test doubles still compile. */
+  requestBackgroundLocation?(): Promise<PermissionResult>;
   start(options: NativeStartOptions): Promise<void>;
   /**
    * Foreground GPS+IMU for a live readout. Not a trip: no FGS, journal, or session.

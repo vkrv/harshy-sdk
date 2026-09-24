@@ -33,7 +33,7 @@ pnpm test       # includes native Android JUnit (+ Swift HarshyMath on macOS)
 - `@harshy/core` is the canonical detector. Do not copy pulse / scoring math into a host.
 - Host Expo/RN apps depend on **both** `@harshy/sdk` and `@harshy/native`.
 - Native Android/iOS apps use `HarshyClient`. Do not construct it in the same process as the Expo module.
-- `requestPermissions()` must not start capture. Trip GPS+IMU start in `start()` and stop in `stop()`.
+- `requestPermissions()` asks for foreground location, motion, and notifications only. `requestPermission(kind)` and `requestBackgroundLocation()` ask for one permission. None of them start capture. Trip GPS+IMU start in `start()` and stop in `stop()`.
 - Default `createHarshy()` is **manual**. `arm()` / `disarm()` are opt-in auto-trip.
 - `setUploadAdapter()` is optional. Nothing is uploaded until a host provides an adapter.
 - Pass `liveDisplayTitle` from the host app name. The SDK fallback is **Harshy**.

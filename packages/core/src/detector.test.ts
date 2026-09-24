@@ -236,8 +236,8 @@ describe("detector", () => {
 
   it("takes away one third of the event weight at the reference trip", () => {
     const score = scoreEvents([brake], DEFAULT_DETECTOR_CONFIG, {
-      distanceM: 10_000,
-      durationMs: 15 * 60_000,
+      distanceM: 5_000,
+      durationMs: 10 * 60_000,
     });
     expect(SCORE_PENALTY_X).toBe(1 / 3);
     expect(score).toBeCloseTo(100 - DEFAULT_DETECTOR_CONFIG.score.harshBrake * SCORE_PENALTY_X);

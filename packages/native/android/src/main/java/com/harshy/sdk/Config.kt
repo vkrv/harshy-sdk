@@ -12,8 +12,8 @@ data class DetectorScoreWeights(
   val speeding: Double = 4.0,
   val jerk: Double = 3.0,
   val compound: Double = 3.0,
-  val refDistanceKm: Double = 10.0,
-  val refDurationMin: Double = 15.0,
+  val refDistanceKm: Double = 5.0,
+  val refDurationMin: Double = 10.0,
   val minDistanceKm: Double = 2.0,
   val minDurationMin: Double = 5.0,
 )

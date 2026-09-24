@@ -28,7 +28,7 @@ export type WatchFix = {
  * Not part of `DetectorConfig`.
  */
 export type TripHeuristicConfig = {
-  /** Speed that counts as “in a vehicle” (~20 km/h). Walking is usually below this. */
+  /** Speed that counts as driving (10 km/h). A typical walk stays below this. */
   startSpeedMps: number;
   /** Horizontal distance while continuously above `startSpeedMps` to begin warmup. */
   startDistanceM: number;
@@ -71,7 +71,7 @@ export type TripHeuristicConfig = {
 };
 
 export const DEFAULT_TRIP_HEURISTIC_CONFIG: TripHeuristicConfig = {
-  startSpeedMps: 5.5,
+  startSpeedMps: 10 / 3.6,
   startDistanceM: 40,
   startHoldMs: 5_000,
   commitDistanceM: 150,

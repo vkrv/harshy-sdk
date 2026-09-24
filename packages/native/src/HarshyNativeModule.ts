@@ -12,6 +12,8 @@ declare class HarshyNativeModule
   getCapabilities: HarshyNativeModuleApi["getCapabilities"];
   getPermissionStatus: HarshyNativeModuleApi["getPermissionStatus"];
   requestPermissions: HarshyNativeModuleApi["requestPermissions"];
+  requestPermission: HarshyNativeModuleApi["requestPermission"];
+  requestBackgroundLocation: HarshyNativeModuleApi["requestBackgroundLocation"];
   start: HarshyNativeModuleApi["start"];
   startPreview: HarshyNativeModuleApi["startPreview"];
   stopPreview: HarshyNativeModuleApi["stopPreview"];

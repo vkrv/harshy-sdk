@@ -25,6 +25,7 @@ import {
   type IdleMotionState,
   type LiveMetrics,
   type LocationSample,
+  type PermissionResult,
   type RecordingMode,
   type SessionExport,
   type TripAnalyzer,
@@ -55,6 +56,10 @@ export type HarshyClient = {
   getCapabilities: () => ReturnType<SensorEngine["getCapabilities"]>;
   getPermissionStatus: () => ReturnType<SensorEngine["getPermissionStatus"]>;
   requestPermissions: () => ReturnType<SensorEngine["requestPermissions"]>;
+  /** One system prompt. The host explains that permission in the app first. */
+  requestPermission: (kind: keyof PermissionResult) => ReturnType<SensorEngine["requestPermissions"]>;
+  /** Background / Always location. Does not prompt until the host calls it. */
+  requestBackgroundLocation: () => ReturnType<SensorEngine["requestPermissions"]>;
   start: (options?: HarshyStartOptions) => Promise<void>;
   /**
    * Foreground GPS+IMU readout without starting a trip. No journal, FGS,
@@ -586,6 +591,17 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
     getCapabilities: () => resolveEngine().getCapabilities(),
     getPermissionStatus: () => resolveEngine().getPermissionStatus(),
     requestPermissions: () => resolveEngine().requestPermissions(),
+    requestPermission: (kind) => {
+      const engine = resolveEngine();
+      if (kind === "backgroundLocation") {
+        return engine.requestBackgroundLocation?.() ?? engine.requestPermissions();
+      }
+      return engine.requestPermission?.(kind) ?? engine.requestPermissions();
+    },
+    requestBackgroundLocation: () => {
+      const engine = resolveEngine();
+      return engine.requestBackgroundLocation?.() ?? engine.requestPermissions();
+    },
     async start(options) {
       if (running) {
         await client.stop();

@@ -36,6 +36,14 @@ class HarshyNativeModule
     return this.getPermissionStatus();
   }
 
+  async requestPermission() {
+    return this.getPermissionStatus();
+  }
+
+  async requestBackgroundLocation() {
+    return this.getPermissionStatus();
+  }
+
   async start(): Promise<void> {
     throw new Error("Native Harshy engine is not available on web. Use source: \"simulated\".");
   }

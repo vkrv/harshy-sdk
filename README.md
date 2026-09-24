@@ -134,7 +134,7 @@ Kotlin `analyzeTrip` and Swift `harshyAnalyzeTrip` are equivalent.
 - Optional local history (`historyStore`) and host-owned `UploadAdapter` (nothing is uploaded until you set one)
 - Optional automatic trips (`arm` / `disarm`) — preview, not fully calibrated
 
-GPS+IMU for a trip start only on `start()` and end on `stop()`. `requestPermissions()` only shows system dialogs. `startPreview` / `stopPreview` are a foreground readout that is **not** a trip (no journal, no foreground service).
+GPS+IMU for a trip start only on `start()` and end on `stop()`. `requestPermissions()` shows foreground system dialogs only. Background location is `requestPermission("backgroundLocation")` or `requestBackgroundLocation()`. `startPreview` / `stopPreview` are a foreground readout that is **not** a trip (no journal, no foreground service).
 
 Do not construct `HarshyClient` in the same process as the Expo module — both own the engine listener.
 

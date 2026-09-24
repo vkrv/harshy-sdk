@@ -114,11 +114,25 @@ class HarshyClient @JvmOverloads constructor(
   fun permissionStatus(): Map<String, String> = engine.permissionStatus()
 
   /**
-   * Prompts for fine/coarse location (and notifications on API 33+), then
-   * background location on API 29+. The host [Activity] must forward
+   * Prompts for fine/coarse location (and notifications on API 33+, activity on API 29+).
+   * Does not request background location. The host [Activity] must forward
    * [Activity.onRequestPermissionsResult] to [onRequestPermissionsResult].
    */
   fun requestPermissions(activity: Activity, onDone: (Map<String, String>) -> Unit = {}) {
+    chainBackground = false
+    beginForegroundPermissions(activity, onDone)
+  }
+
+  /**
+   * Background location on API 29+. Call only after an in-app prominent disclosure.
+   * Asks for foreground location first when that is still missing.
+   */
+  fun requestBackgroundLocation(activity: Activity, onDone: (Map<String, String>) -> Unit = {}) {
+    chainBackground = true
+    beginForegroundPermissions(activity, onDone)
+  }
+
+  private fun beginForegroundPermissions(activity: Activity, onDone: (Map<String, String>) -> Unit) {
     permissionActivity = activity
     permissionDone = onDone
     val foreground = foregroundPermissions()
@@ -126,7 +140,13 @@ class HarshyClient @JvmOverloads constructor(
       ContextCompat.checkSelfPermission(activity, it) != PackageManager.PERMISSION_GRANTED
     }
     if (missing.isEmpty()) {
-      requestBackgroundIfNeeded(activity, onDone)
+      if (chainBackground) {
+        requestBackgroundIfNeeded(activity, onDone)
+      } else {
+        permissionDone = null
+        permissionActivity = null
+        onDone(engine.permissionStatus())
+      }
       return
     }
     ActivityCompat.requestPermissions(activity, missing.toTypedArray(), REQUEST_FOREGROUND)
@@ -146,7 +166,14 @@ class HarshyClient @JvmOverloads constructor(
       return false
     }
     if (requestCode == REQUEST_FOREGROUND) {
-      requestBackgroundIfNeeded(activity, permissionDone ?: {})
+      if (chainBackground) {
+        requestBackgroundIfNeeded(activity, permissionDone ?: {})
+      } else {
+        val done = permissionDone
+        permissionDone = null
+        permissionActivity = null
+        done?.invoke(engine.permissionStatus())
+      }
       return true
     }
     if (requestCode == REQUEST_BACKGROUND) {
@@ -418,6 +445,7 @@ class HarshyClient @JvmOverloads constructor(
   }
 
   private var permissionActivity: Activity? = null
+  private var chainBackground = false
 
   private fun requestBackgroundIfNeeded(activity: Activity, onDone: (Map<String, String>) -> Unit) {
     permissionActivity = activity

@@ -29,7 +29,8 @@ let harshyDriveFixMaxStepM = 80.0
 let harshyDriveFixResetAfter = 10
 let harshyDriveFixCoarseFractionDigits = 7
 let harshyDriveFixGnssAccuracyM = 50.0
-let harshyWatchVehicleSpeedMps = 5.5
+/// 10 km/h. Matches core `startSpeedMps`.
+let harshyWatchVehicleSpeedMps = 10.0 / 3.6
 
 func harshyCoordinateFractionDigits(_ value: Double) -> Int {
   guard value.isFinite else { return 0 }

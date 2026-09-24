@@ -26,6 +26,18 @@ public class HarshyNativeModule: Module, HarshyEngine.Listener {
       }
     }
 
+    AsyncFunction("requestPermission") { (kind: String, promise: Promise) in
+      self.engine.requestPermission(kind: kind) { status in
+        promise.resolve(status)
+      }
+    }
+
+    AsyncFunction("requestBackgroundLocation") { (promise: Promise) in
+      self.engine.requestBackgroundLocation { status in
+        promise.resolve(status)
+      }
+    }
+
     AsyncFunction("start") { (options: [String: Any]) in
       try self.engine.start(options: options)
     }

@@ -9,7 +9,8 @@ object WatchFixMaps {
   const val STEP_WALKING_WINDOW_MS = 8_000L
   const val WATCH_MIN_TIME_MS = 8_000L
   const val WATCH_MIN_DISTANCE_M = 25f
-  const val VEHICLE_SPEED_MPS = 5.5
+  /** 10 km/h. Matches core `startSpeedMps`. */
+  const val VEHICLE_SPEED_MPS = 10.0 / 3.6
 
   fun activityFromSteps(nowMs: Long, lastStepAtMs: Long?, speedMps: Double? = null): String {
     if (speedMps != null && speedMps.isFinite() && speedMps >= VEHICLE_SPEED_MPS) {

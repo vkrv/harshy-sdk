@@ -89,10 +89,35 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
 
   public func requestPermissions(completion: @escaping ([String: String]) -> Void) {
     requestWhenInUseIfNeeded { [weak self] in
+      self?.requestMotionIfNeeded {
+        completion(self?.permissionStatus() ?? [:])
+      }
+    }
+  }
+
+  /// One permission. Hosts explain that permission in the app before calling this.
+  public func requestPermission(kind: String, completion: @escaping ([String: String]) -> Void) {
+    switch kind {
+    case "location":
+      requestWhenInUseIfNeeded { [weak self] in
+        completion(self?.permissionStatus() ?? [:])
+      }
+    case "motion":
+      requestMotionIfNeeded { [weak self] in
+        completion(self?.permissionStatus() ?? [:])
+      }
+    case "backgroundLocation":
+      requestBackgroundLocation(completion: completion)
+    default:
+      completion(permissionStatus())
+    }
+  }
+
+  /// Always authorization. Call only after an in-app prominent disclosure.
+  public func requestBackgroundLocation(completion: @escaping ([String: String]) -> Void) {
+    requestWhenInUseIfNeeded { [weak self] in
       self?.requestAlwaysIfNeeded {
-        self?.requestMotionIfNeeded {
-          completion(self?.permissionStatus() ?? [:])
-        }
+        completion(self?.permissionStatus() ?? [:])
       }
     }
   }
@@ -175,7 +200,7 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     startForegroundSensors()
   }
 
-  /// Stop a foreground sensor readout. No-op during a trip. Leaves an armed watch in place.
+  /// Stop a Sensors-tab readout. No-op during a trip. Leaves an armed watch in place.
   public func stopPreview() {
     guard previewing else {
       return

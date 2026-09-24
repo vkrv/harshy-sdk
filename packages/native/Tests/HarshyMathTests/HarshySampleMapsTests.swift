@@ -46,7 +46,9 @@ final class HarshySampleMapsTests: XCTestCase {
 
   func testWatchKinematicActivityIgnoresWalkingAtVehicleSpeed() {
     XCTAssertEqual(harshyWatchKinematicActivity("walking", speedMps: 12), "unknown")
+    XCTAssertEqual(harshyWatchKinematicActivity("walking", speedMps: 10.0 / 3.6), "unknown")
     XCTAssertEqual(harshyWatchKinematicActivity("walking", speedMps: 1), "walking")
+    XCTAssertEqual(harshyWatchKinematicActivity("walking", speedMps: 10.0 / 3.6 - 0.1), "walking")
     XCTAssertEqual(harshyWatchKinematicActivity("cycling", speedMps: 12), "cycling")
   }
 

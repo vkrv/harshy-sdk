@@ -54,6 +54,12 @@ export function createSimulatedEngine(options?: {
     async requestPermissions() {
       return grantedPermissions();
     },
+    async requestPermission() {
+      return grantedPermissions();
+    },
+    async requestBackgroundLocation() {
+      return grantedPermissions();
+    },
     async start(native: NativeStartOptions) {
       stopPreviewLocked();
       const trip = generateSampleTrip({

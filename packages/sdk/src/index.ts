@@ -94,6 +94,7 @@ export {
   permissionLabel,
   permissionResult,
   scoreEvents,
+  eventScorePoints,
   sessionExportSchema,
   shouldEndTrip,
   shouldStartTrip,

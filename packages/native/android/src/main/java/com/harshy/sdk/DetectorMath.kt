@@ -35,6 +35,9 @@ internal fun haversineM(a: LocationSample, b: LocationSample): Double {
 }
 
 internal const val DRIVE_FIX_MAX_SPEED_MPS = 55.0
+internal const val DRIVE_FIX_MAX_ACCEL_MPS2 = 12.0
+internal const val DRIVE_FIX_ACCEL_MAX_DT_SEC = 8.0
+internal const val DRIVE_FIX_SPEED_HOLD_RATIO = 0.6
 internal const val DRIVE_FIX_MAX_STEP_M = 80.0
 internal const val DRIVE_FIX_RESET_AFTER = 10
 internal const val DRIVE_FIX_COARSE_FRACTION_DIGITS = 7
@@ -113,6 +116,48 @@ internal fun isCoarseNetworkLikeFix(sample: LocationSample): Boolean {
   }
   return coordinateFractionDigits(sample.lat) <= DRIVE_FIX_COARSE_FRACTION_DIGITS ||
     coordinateFractionDigits(sample.lon) <= DRIVE_FIX_COARSE_FRACTION_DIGITS
+}
+
+internal fun isSuspiciousSpeedLeap(from: LocationSample, to: LocationSample): Boolean {
+  val prev = from.speedMps
+  val next = to.speedMps
+  if (prev == null || next == null || !prev.isFinite() || !next.isFinite()) {
+    return false
+  }
+  val dtSec = (to.t - from.t) / 1000.0
+  if (!dtSec.isFinite() || dtSec < 0.0 || dtSec > DRIVE_FIX_ACCEL_MAX_DT_SEC) {
+    return false
+  }
+  val dt = maxOf(dtSec, 0.05)
+  val reportedAccel = kotlin.math.abs(next - prev) / dt
+  if (reportedAccel <= DRIVE_FIX_MAX_ACCEL_MPS2) {
+    return false
+  }
+  val impliedAccel = kotlin.math.abs(haversineM(from, to) / dt - prev) / dt
+  return impliedAccel > DRIVE_FIX_MAX_ACCEL_MPS2
+}
+
+internal fun speedLeapHolds(
+  anchor: LocationSample,
+  leap: LocationSample,
+  next: LocationSample,
+): Boolean {
+  if (!isSuspiciousSpeedLeap(anchor, leap)) {
+    return true
+  }
+  val leapSpeed = leap.speedMps
+  val nextSpeed = next.speedMps
+  if (
+    leapSpeed != null && nextSpeed != null &&
+    leapSpeed.isFinite() && nextSpeed.isFinite() &&
+    nextSpeed >= leapSpeed * DRIVE_FIX_SPEED_HOLD_RATIO
+  ) {
+    return true
+  }
+  val out = haversineM(anchor, leap)
+  val back = haversineM(anchor, next)
+  val onward = haversineM(leap, next)
+  return out >= 1.0 && back > out * 0.85 && onward > out * 0.35
 }
 
 internal fun isPlausibleDriveStep(from: LocationSample, to: LocationSample): Boolean {

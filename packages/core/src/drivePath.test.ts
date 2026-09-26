@@ -4,7 +4,9 @@ import {
   compensateDrivePath,
   isCoarseNetworkLikeFix,
   isPlausibleDriveStep,
+  isSuspiciousSpeedLeap,
   shouldAcceptDriveFix,
+  speedLeapHolds,
   type DriveFixPoint,
 } from "./drivePath.js";
 import { haversineM } from "./geo.js";
@@ -31,6 +33,56 @@ describe("drivePath", () => {
     };
     expect(isCoarseNetworkLikeFix(gnss)).toBe(false);
     expect(shouldAcceptDriveFix(null, gnss, 0).accept).toBe(true);
+  });
+
+  it("treats a snap-back speed jump as unconfirmed and a continued run as real", () => {
+    const from: DriveFixPoint = {
+      t: 1_790_411_003_947,
+      lat: 59.4104282,
+      lon: 24.6768128,
+      speedMps: 0.72,
+      accuracyM: 10.5,
+    };
+    const leap: DriveFixPoint = {
+      t: 1_790_411_004_118,
+      lat: 59.4104768,
+      lon: 24.676784,
+      speedMps: 33.01,
+      accuracyM: 15.9,
+    };
+    const back: DriveFixPoint = {
+      t: 1_790_411_004_676,
+      lat: 59.4104289,
+      lon: 24.6768066,
+      speedMps: 0.64,
+      accuracyM: 10.7,
+    };
+    expect(haversineM(from, leap)).toBeLessThan(10);
+    expect(isPlausibleDriveStep(from, leap)).toBe(true);
+    expect(isSuspiciousSpeedLeap(from, leap)).toBe(true);
+    expect(speedLeapHolds(from, leap, back)).toBe(false);
+
+    const kept: DriveFixPoint = {
+      t: from.t! + 1_000,
+      lat: 59.4107,
+      lon: 24.6768,
+      speedMps: 33,
+    };
+    const still: DriveFixPoint = {
+      t: from.t! + 2_000,
+      lat: 59.41097,
+      lon: 24.6768,
+      speedMps: 32,
+    };
+    expect(isSuspiciousSpeedLeap(from, kept)).toBe(true);
+    expect(speedLeapHolds(from, kept, still)).toBe(true);
+  });
+
+  it("keeps a hard brake that stays under the GPS glitch accel", () => {
+    const from: DriveFixPoint = { t: 0, lat: 59.41, lon: 24.67, speedMps: 12 };
+    const brake: DriveFixPoint = { t: 1000, lat: 59.41005, lon: 24.67008, speedMps: 5 };
+    expect(isPlausibleDriveStep(from, brake)).toBe(true);
+    expect(isSuspiciousSpeedLeap(from, brake)).toBe(false);
   });
 
   it("rejects an impossible teleport step", () => {

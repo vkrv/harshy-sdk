@@ -42,6 +42,7 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
   private var watching = false
   private var watchActivityManager: CMMotionActivityManager?
   private var lastWatchActivity = "unknown"
+  private var watchStartState = HarshyWatchStartState()
 
   public override init() {
     super.init()
@@ -57,7 +58,7 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     watchManager.activityType = .automotiveNavigation
     watchManager.pausesLocationUpdatesAutomatically = false
     watchManager.allowsBackgroundLocationUpdates = false
-    watchManager.showsBackgroundLocationIndicator = false
+    watchManager.showsBackgroundLocationIndicator = true
   }
 
   public func capabilities() -> [String: Any] {
@@ -294,6 +295,9 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     }
     watching = true
     lastWatchActivity = "unknown"
+    watchStartState = HarshyWatchStartState()
+    watchManager.allowsBackgroundLocationUpdates = true
+    watchManager.showsBackgroundLocationIndicator = true
     watchManager.startMonitoringSignificantLocationChanges()
     watchManager.startUpdatingLocation()
     startWatchActivity()
@@ -305,6 +309,8 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     }
     watching = false
     lastWatchActivity = "unknown"
+    watchStartState = HarshyWatchStartState()
+    watchManager.allowsBackgroundLocationUpdates = false
     watchManager.stopUpdatingLocation()
     watchManager.stopMonitoringSignificantLocationChanges()
     stopWatchActivity()
@@ -411,6 +417,23 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     }
     // Publish immediately. Waiting on queryActivityStarting delayed every
     // watch fix (and can stall in the background), which blocked auto-start.
+    let speed: Double? = location.speed >= 0 ? location.speed : nil
+    let accuracy: Double? = location.horizontalAccuracy >= 0 ? location.horizontalAccuracy : nil
+    let t = location.timestamp.timeIntervalSince1970 * 1000
+    let decided = harshyWatchShouldStart(
+      watchStartState,
+      t: t,
+      lat: location.coordinate.latitude,
+      lon: location.coordinate.longitude,
+      speedMps: speed,
+      accuracyM: accuracy,
+      activity: lastWatchActivity
+    )
+    watchStartState = decided.state
+    if decided.start {
+      try? start(options: ["trigger": "auto", "background": true])
+      return
+    }
     publishWatchFix(location, activity: lastWatchActivity)
   }
 

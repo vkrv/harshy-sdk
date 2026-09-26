@@ -27,8 +27,8 @@ import {
 } from "./impact.js";
 import type { DetectorConfig, NativeStartOptions } from "./types.js";
 
-/** Event penalties apply at 1/3 so everyday driving stays in a high score band. */
-export const SCORE_PENALTY_X = 1 / 3;
+/** Event penalties apply at 1/2. */
+export const SCORE_PENALTY_X = 1 / 2;
 
 export const DEFAULT_DETECTOR_CONFIG: DetectorConfig = {
   harshAccelMps2: 2.5,

@@ -43,7 +43,8 @@ export type HarshyNativeModuleApi = {
   /** Foreground GPS+IMU readout. Not a trip — no FGS / journal / running. */
   startPreview(options: NativeStartOptions): Promise<void>;
   stopPreview(): Promise<void>;
-  stop(): Promise<NativeRawSession>;
+  /** `handoffToWatch` keeps the Android location FGS up so auto re-arm does not call `startForegroundService` from the background. */
+  stop(options?: { handoffToWatch?: boolean }): Promise<NativeRawSession>;
   getSnapshot(): Promise<NativeRawSession>;
   isRunning(): Promise<boolean>;
   /** Update the Android trip notification (and iOS Live Activity host bridge). */

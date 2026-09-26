@@ -4,6 +4,18 @@ import type { LocationSample } from "./types.js";
 /** Reject steps faster than this unless GPS reports higher (with margin). */
 export const DRIVE_FIX_MAX_SPEED_MPS = 55;
 
+/**
+ * A step sharper than this is only suspicious. It is a glitch when the next
+ * fix does not keep the speed or the track. A real run at that speed confirms it.
+ */
+export const DRIVE_FIX_MAX_ACCEL_MPS2 = 12;
+
+/** Next speed at least this fraction of the leap still counts as holding it. */
+export const DRIVE_FIX_SPEED_HOLD_RATIO = 0.6;
+
+/** Speed changes across a longer gap are a new segment, not one jerk. */
+export const DRIVE_FIX_ACCEL_MAX_DT_SEC = 8;
+
 /** Absolute step cap when timestamps are missing (~200 km/h at 1 Hz). */
 export const DRIVE_FIX_MAX_STEP_M = 80;
 
@@ -21,7 +33,7 @@ export const DRIVE_FIX_SPIKE_RATIO = 2.5;
 
 /**
  * Lat/lon printed with this many fractional digits or fewer, plus null speed,
- * matches Android network/cell injects seen in recorded trips.
+ * matches Android network/cell injects seen in Signumb trips.
  */
 export const DRIVE_FIX_COARSE_FRACTION_DIGITS = 7;
 
@@ -94,6 +106,67 @@ function stepLimitM(
   const reported = Math.max(from.speedMps ?? 0, to.speedMps ?? 0);
   const cap = Math.max(maxSpeedMps, reported * 1.35 + 8);
   return cap * dtSec;
+}
+
+function finiteSpeed(value: number | null | undefined): value is number {
+  return value != null && Number.isFinite(value);
+}
+
+/**
+ * Track and reported speed both leap faster than a vehicle. Not a reject by
+ * itself — the next fix confirms a real speed or shows a one-sample glitch.
+ */
+export function isSuspiciousSpeedLeap(from: DriveFixPoint, to: DriveFixPoint): boolean {
+  if (!finiteSpeed(from.speedMps) || !finiteSpeed(to.speedMps)) {
+    return false;
+  }
+  if (
+    from.t == null ||
+    to.t == null ||
+    !Number.isFinite(from.t) ||
+    !Number.isFinite(to.t)
+  ) {
+    return false;
+  }
+  const dtSec = (to.t - from.t) / 1000;
+  if (!Number.isFinite(dtSec) || dtSec < 0 || dtSec > DRIVE_FIX_ACCEL_MAX_DT_SEC) {
+    return false;
+  }
+  const dt = Math.max(dtSec, 0.05);
+  const reportedAccel = Math.abs(to.speedMps - from.speedMps) / dt;
+  if (reportedAccel <= DRIVE_FIX_MAX_ACCEL_MPS2) {
+    return false;
+  }
+  const impliedAccel = Math.abs(haversineM(from, to) / dt - from.speedMps) / dt;
+  return impliedAccel > DRIVE_FIX_MAX_ACCEL_MPS2;
+}
+
+/**
+ * True when the leap should be kept. The next fix still reports that speed,
+ * or the track keeps moving away from the anchor. A snap back to the previous
+ * speed and place is a glitch.
+ */
+export function speedLeapHolds(
+  anchor: DriveFixPoint,
+  leap: DriveFixPoint,
+  next: DriveFixPoint,
+): boolean {
+  if (!isSuspiciousSpeedLeap(anchor, leap)) {
+    return true;
+  }
+  const leapSpeed = leap.speedMps;
+  const nextSpeed = next.speedMps;
+  if (
+    finiteSpeed(leapSpeed) &&
+    finiteSpeed(nextSpeed) &&
+    nextSpeed >= leapSpeed * DRIVE_FIX_SPEED_HOLD_RATIO
+  ) {
+    return true;
+  }
+  const out = haversineM(anchor, leap);
+  const back = haversineM(anchor, next);
+  const onward = haversineM(leap, next);
+  return out >= 1 && back > out * 0.85 && onward > out * 0.35;
 }
 
 /** True when the step from `from` → `to` is a plausible on-road GPS update. */

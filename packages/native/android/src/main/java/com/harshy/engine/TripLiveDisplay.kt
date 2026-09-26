@@ -59,14 +59,24 @@ object TripLiveDisplay {
   }
 
   fun buildNotification(context: Context, payload: TripLivePayload): Notification {
+    val label = payload.title.ifBlank { appLabel(context) }
+    return notification(context, label, payload.line())
+  }
+
+  fun buildWatchNotification(context: Context, title: String): Notification {
+    return notification(context, title.ifBlank { appLabel(context) }, "Waiting for a drive")
+  }
+
+  private fun appLabel(context: Context): String {
+    return context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty().ifBlank { "Signumb" }
+  }
+
+  private fun notification(context: Context, title: String, body: String): Notification {
     ensureChannel(context)
-    val label = payload.title.ifBlank {
-      context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty().ifBlank { "Harshy" }
-    }
     return NotificationCompat.Builder(context, CHANNEL_ID)
-      .setContentTitle(label)
-      .setContentText(payload.line())
-      .setStyle(NotificationCompat.BigTextStyle().bigText(payload.line()))
+      .setContentTitle(title)
+      .setContentText(body)
+      .setStyle(NotificationCompat.BigTextStyle().bigText(body))
       .setSmallIcon(smallIcon(context))
       .setContentIntent(launchAppIntent(context))
       .setOngoing(true)

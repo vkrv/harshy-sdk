@@ -73,6 +73,19 @@ class DetectorMathTest {
   }
 
   @Test
+  fun speedLeapNeedsTheNextFix() {
+    val from = loc(1_790_411_003_947.0, lat = 59.4104282, lon = 24.6768128, speedMps = 0.72)
+    val leap = loc(1_790_411_004_118.0, lat = 59.4104768, lon = 24.676784, speedMps = 33.01)
+    val back = loc(1_790_411_004_676.0, lat = 59.4104289, lon = 24.6768066, speedMps = 0.64)
+    assertTrue(isPlausibleDriveStep(from, leap))
+    assertTrue(isSuspiciousSpeedLeap(from, leap))
+    assertFalse(speedLeapHolds(from, leap, back))
+    val kept = loc(1_790_411_004_947.0, lat = 59.4107, lon = 24.6768, speedMps = 33.0)
+    val still = loc(1_790_411_005_947.0, lat = 59.41097, lon = 24.6768, speedMps = 32.0)
+    assertTrue(speedLeapHolds(from, kept, still))
+  }
+
+  @Test
   fun acceptsAfterEnoughImplausibleSteps() {
     val far = LocationSample(
       t = 732.0,

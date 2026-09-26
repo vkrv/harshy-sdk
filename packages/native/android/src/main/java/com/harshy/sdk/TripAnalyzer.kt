@@ -37,6 +37,7 @@ class TripAnalyzer(
   private var maxSpeedMps: Double? = null
   private var speedSum = 0.0
   private var speedCount = 0
+  private var heldSpeedLeap: LocationSample? = null
 
   fun setConfig(next: DetectorConfig) {
     config = mergeDetectorConfig(next)
@@ -52,13 +53,36 @@ class TripAnalyzer(
   }
 
   fun pushLocation(sample: LocationSample): AnalyzerPush {
-    val decision = shouldAcceptDriveFix(location.lastOrNull(), sample, locationRejects)
+    val carried = mutableListOf<DrivingEvent>()
+    val pending = heldSpeedLeap
+    if (pending != null) {
+      heldSpeedLeap = null
+      val prior = location.lastOrNull()
+      if (prior == null || speedLeapHolds(prior, pending, sample)) {
+        carried.addAll(commitLocation(pending).newEvents)
+      }
+    }
+
+    val anchor = location.lastOrNull()
+    val decision = shouldAcceptDriveFix(anchor, sample, locationRejects)
     locationRejects = decision.rejects
     if (!decision.accept) {
       val t = lastGoodLocation?.t ?: lastImu?.t ?: startedAtMs
-      return AnalyzerPush(metrics = buildMetrics(t), newEvents = emptyList())
+      return AnalyzerPush(metrics = buildMetrics(t), newEvents = carried)
     }
+    if (anchor != null && isSuspiciousSpeedLeap(anchor, sample)) {
+      heldSpeedLeap = sample
+      val t = lastGoodLocation?.t ?: lastImu?.t ?: startedAtMs
+      return AnalyzerPush(metrics = buildMetrics(t), newEvents = carried)
+    }
+    val committed = commitLocation(sample)
+    return AnalyzerPush(
+      metrics = committed.metrics,
+      newEvents = carried + committed.newEvents,
+    )
+  }
 
+  private fun commitLocation(sample: LocationSample): AnalyzerPush {
     val stored = sample.copy(
       speedMps = derivedSpeedMps(lastGoodLocation, sample) ?: sample.speedMps,
       courseDeg = derivedCourseDeg(lastGoodLocation, sample) ?: sample.courseDeg,
@@ -540,11 +564,10 @@ fun createTripAnalyzer(
   return TripAnalyzer(config, sessionId, startedAtMs, device, trigger)
 }
 
+@Suppress("UNUSED_PARAMETER")
 fun scoreExposureScale(distanceM: Double, durationMs: Double, config: DetectorConfig): Double {
   val km = max(distanceM / 1000.0, config.score.minDistanceKm)
-  val minutes = max(durationMs / 60_000.0, config.score.minDurationMin)
-  val exposure =
-    (km / config.score.refDistanceKm + minutes / config.score.refDurationMin) / 2.0
+  val exposure = km / config.score.refDistanceKm
   return clamp(1 / max(exposure, 1e-6), 0.2, 4.0)
 }
 

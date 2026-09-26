@@ -23,6 +23,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import java.util.ArrayDeque
 import java.util.Collections
@@ -71,7 +72,10 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   @Volatile private var running = false
   @Volatile private var previewing = false
   @Volatile private var watching = false
+  /** True after [TripForegroundService] has entered the foreground. Not cleared on an auto-trip handoff. */
+  @Volatile private var foregroundUp = false
   @Volatile private var lastStepAtMs: Long? = null
+  private var watchStartState = WatchStartGate.State()
   private var significantListener: TriggerEventListener? = null
   private val tripFeeds = LocationFeeds()
   private val watchFeeds = LocationFeeds()
@@ -334,7 +338,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     }
   }
 
-  fun stop(includeImu: Boolean = false): Map<String, Any?> {
+  fun stop(includeImu: Boolean = false, handoffToWatch: Boolean = false): Map<String, Any?> {
     synchronized(lifecycleLock) {
       running = false
       lastGpsFixAtMs = null
@@ -355,7 +359,13 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       } catch (_: Exception) {
       }
       releaseWakeLock()
-      stopForeground()
+      // Auto re-arms next. Stopping the service and calling startForegroundService
+      // from the background throws ForegroundServiceStartNotAllowedException.
+      if (ForegroundServiceHandoff.keepRunning(handoffToWatch, foregroundUp)) {
+        publishWatchNotification()
+      } else {
+        stopForeground()
+      }
       flushImuBatch()
       journal.clear()
 
@@ -401,17 +411,33 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       }
       watching = true
       lastStepAtMs = null
+      watchStartState = WatchStartGate.State()
       startWatchLocked()
+      startForeground()
     }
   }
 
   fun disarmWatch() {
     synchronized(lifecycleLock) {
+      val wasWatching = watching
       disarmWatchLocked()
+      if (wasWatching && !running) {
+        stopForeground()
+      }
     }
   }
 
   fun isWatching(): Boolean = watching
+
+  /** Called from [TripForegroundService] after `startForeground` succeeds. */
+  fun markForegroundServiceStarted() {
+    foregroundUp = true
+  }
+
+  /** Called from [TripForegroundService.onDestroy]. */
+  fun markForegroundServiceStopped() {
+    foregroundUp = false
+  }
 
   fun snapshot(
     endedAtMs: Long = System.currentTimeMillis(),
@@ -462,6 +488,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     watching = false
     lastStepAtMs = null
     lastGpsFixAtMs = null
+    watchStartState = WatchStartGate.State()
     unbindLocationFeeds(watchFeeds)
     removeLocationUpdates(watchSingleListeners.toList())
     watchSingleListeners.clear()
@@ -528,6 +555,31 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     }
     if (usableGnssLock(location)) {
       lastGpsFixAtMs = nowMs
+    }
+    val speed = if (location.hasSpeed()) location.speed.toDouble() else null
+    val accuracy = if (location.hasAccuracy()) location.accuracy.toDouble() else null
+    val decided = WatchStartGate.consider(
+      watchStartState,
+      nowMs,
+      location.latitude,
+      location.longitude,
+      speed,
+      accuracy,
+      WatchFixMaps.activityFromSteps(nowMs, lastStepAtMs, speed),
+    )
+    watchStartState = decided.state
+    if (decided.start) {
+      try {
+        start(mapOf("trigger" to "auto", "background" to true))
+      } catch (error: Exception) {
+        listener?.onError(
+          mapOf(
+            "code" to "auto_start",
+            "message" to (error.message ?: "Automatic start failed"),
+          ),
+        )
+      }
+      return
     }
     val activity = WatchFixMaps.activityFromSteps(
       nowMs,
@@ -849,6 +901,10 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   private fun startForeground() {
+    if (!ForegroundServiceHandoff.shouldStartService(foregroundUp)) {
+      publishForegroundNotification()
+      return
+    }
     try {
       val intent = Intent(context, TripForegroundService::class.java)
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -867,9 +923,40 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   private fun stopForeground() {
+    foregroundUp = false
     try {
       context.stopService(Intent(context, TripForegroundService::class.java))
     } catch (_: Exception) {
+    }
+  }
+
+  private fun appLabel(): String {
+    return context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty()
+      .ifBlank { "Signumb" }
+  }
+
+  /** Trip numbers while recording; “Waiting for a drive” while only the watch is armed. */
+  private fun publishForegroundNotification() {
+    val label = appLabel()
+    val notification = if (watching && !running) {
+      TripLiveDisplay.buildWatchNotification(context, label)
+    } else {
+      TripLiveDisplay.buildNotification(context, TripLiveDisplay.lastPayloadOrDefault(label).copy(title = label))
+    }
+    notifyForeground(notification)
+  }
+
+  private fun publishWatchNotification() {
+    notifyForeground(TripLiveDisplay.buildWatchNotification(context, appLabel()))
+  }
+
+  private fun notifyForeground(notification: android.app.Notification) {
+    try {
+      NotificationManagerCompat.from(context).notify(TripLiveDisplay.NOTIFICATION_ID, notification)
+    } catch (error: SecurityException) {
+      Log.w(TAG, "notify blocked", error)
+    } catch (error: Exception) {
+      Log.w(TAG, "notify failed", error)
     }
   }
 

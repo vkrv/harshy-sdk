@@ -64,8 +64,8 @@ export function createNativeEngine(): SensorEngine {
       }
       await HarshyNative.stopPreview();
     },
-    async stop() {
-      return toSession(await HarshyNative.stop());
+    async stop(options) {
+      return toSession(await HarshyNative.stop(options ?? {}));
     },
     async isRunning() {
       return HarshyNative.isRunning();
@@ -119,9 +119,15 @@ export function createNativeEngine(): SensorEngine {
       const errorSub = HarshyNative.addListener("onError", (error) => {
         listeners.onError?.(error);
       });
+      const stateSub = HarshyNative.addListener("onState", (state) => {
+        if (state.running) {
+          listeners.onNativeRunning?.();
+        }
+      });
       return () => {
         fixSub.remove();
         errorSub.remove();
+        stateSub.remove();
       };
     },
   };

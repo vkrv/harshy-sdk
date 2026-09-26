@@ -36,7 +36,7 @@ pnpm test       # includes native Android JUnit (+ Swift HarshyMath on macOS)
 - `requestPermissions()` asks for foreground location, motion, and notifications only. `requestPermission(kind)` and `requestBackgroundLocation()` ask for one permission. None of them start capture. Trip GPS+IMU start in `start()` and stop in `stop()`.
 - Default `createHarshy()` is **manual**. `arm()` / `disarm()` are opt-in auto-trip.
 - `setUploadAdapter()` is optional. Nothing is uploaded until a host provides an adapter.
-- Pass `liveDisplayTitle` from the host app name. The SDK fallback is **Harshy**.
+- Pass `liveDisplayTitle` from the host app name. The copied fallback string is **Signumb**.
 - Docs and comments in this repo stay host-agnostic: no consumer app names, screens, or bundle IDs.
 
 ## Environment

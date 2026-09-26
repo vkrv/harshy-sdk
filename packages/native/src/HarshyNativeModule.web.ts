@@ -54,7 +54,7 @@ class HarshyNativeModule
 
   async stopPreview(): Promise<void> {}
 
-  async stop(): Promise<NativeRawSession> {
+  async stop(_options?: { handoffToWatch?: boolean }): Promise<NativeRawSession> {
     throw new Error("Native Harshy engine is not available on web.");
   }
 

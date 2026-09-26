@@ -953,6 +953,40 @@ describe("Harshy SDK", () => {
     expect(client.getWatchState().phase).toBe("armed");
   });
 
+  it("keeps the location service when an auto trip stops", async () => {
+    let handoff: boolean | undefined;
+    const { engine } = locPumpEngine("handoff");
+    const wrapped: SensorEngine = {
+      ...engine,
+      stop: async (options) => {
+        handoff = options?.handoffToWatch;
+        return engine.stop();
+      },
+    };
+    const client = createHarshy({ engine: wrapped, nativeAvailable: false });
+    await client.arm();
+    await client.start({ trigger: "auto" });
+    await client.stop();
+    expect(handoff).toBe(true);
+    expect(client.getWatchState().phase).toBe("armed");
+  });
+
+  it("drops the location service when a manual trip stops", async () => {
+    let handoff: boolean | undefined;
+    const { engine } = locPumpEngine("manual-handoff");
+    const wrapped: SensorEngine = {
+      ...engine,
+      stop: async (options) => {
+        handoff = options?.handoffToWatch;
+        return engine.stop();
+      },
+    };
+    const client = createHarshy({ engine: wrapped, nativeAvailable: false });
+    await client.start({ trigger: "manual" });
+    await client.stop();
+    expect(handoff).toBe(false);
+  });
+
   it("auto start is warmup until trip GPS meets commit gates", async () => {
     const { engine, emit } = locPumpEngine("warmup-commit");
     const client = createHarshy({ engine, nativeAvailable: false });

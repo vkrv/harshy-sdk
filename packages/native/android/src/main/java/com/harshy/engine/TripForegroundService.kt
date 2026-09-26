@@ -13,9 +13,13 @@ class TripForegroundService : Service() {
     super.onCreate()
     // Must call startForeground promptly after startForegroundService or the OS kills the app.
     try {
-      val label = applicationInfo.loadLabel(packageManager)?.toString().orEmpty().ifBlank { "Harshy" }
-      val payload = TripLiveDisplay.lastPayloadOrDefault(label).copy(title = label)
-      val notification = TripLiveDisplay.buildNotification(this, payload)
+      val label = applicationInfo.loadLabel(packageManager)?.toString().orEmpty().ifBlank { "Signumb" }
+      val engine = HarshyEngine.shared(this)
+      val notification = if (engine.isWatching() && !engine.isRunning()) {
+        TripLiveDisplay.buildWatchNotification(this, label)
+      } else {
+        TripLiveDisplay.buildNotification(this, TripLiveDisplay.lastPayloadOrDefault(label).copy(title = label))
+      }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         startForeground(
           TripLiveDisplay.NOTIFICATION_ID,
@@ -25,6 +29,7 @@ class TripForegroundService : Service() {
       } else {
         startForeground(TripLiveDisplay.NOTIFICATION_ID, notification)
       }
+      engine.markForegroundServiceStarted()
     } catch (error: Exception) {
       Log.e(TAG, "startForeground failed", error)
       try {
@@ -38,7 +43,7 @@ class TripForegroundService : Service() {
     return try {
       val engine = HarshyEngine.shared(this)
       val restored = engine.restoreIfNeeded(fromService = true)
-      if (!restored && !engine.isRunning()) {
+      if (!restored && !engine.isRunning() && !engine.isWatching()) {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
       }
@@ -59,6 +64,7 @@ class TripForegroundService : Service() {
   }
 
   override fun onDestroy() {
+    HarshyEngine.shared(this).markForegroundServiceStopped()
     TripLiveDisplay.clearCache()
     super.onDestroy()
   }

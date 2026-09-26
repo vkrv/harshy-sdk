@@ -25,12 +25,105 @@ func harshyHaversineM(_ a: HarshyLocationSample, _ b: HarshyLocationSample) -> D
 }
 
 let harshyDriveFixMaxSpeedMps = 55.0
+let harshyDriveFixMaxAccelMps2 = 12.0
+let harshyDriveFixAccelMaxDtSec = 8.0
+let harshyDriveFixSpeedHoldRatio = 0.6
 let harshyDriveFixMaxStepM = 80.0
 let harshyDriveFixResetAfter = 10
 let harshyDriveFixCoarseFractionDigits = 7
 let harshyDriveFixGnssAccuracyM = 50.0
 /// 10 km/h. Matches core `startSpeedMps`.
 let harshyWatchVehicleSpeedMps = 10.0 / 3.6
+let harshyWatchStartDistanceM = 40.0
+let harshyWatchStartHoldMs = 5_000.0
+let harshyWatchStartMaxAccuracyM = 50.0
+
+struct HarshyWatchStartState {
+  var movingSinceMs: Double? = nil
+  var distanceM = 0.0
+  var lastLat: Double? = nil
+  var lastLon: Double? = nil
+  var lastT: Double? = nil
+}
+
+/// Probe that starts a trip from the armed watch without the JS runtime.
+func harshyWatchShouldStart(
+  _ state: HarshyWatchStartState,
+  t: Double,
+  lat: Double,
+  lon: Double,
+  speedMps: Double?,
+  accuracyM: Double?,
+  activity: String
+) -> (start: Bool, state: HarshyWatchStartState) {
+  guard lat.isFinite, lon.isFinite else { return (false, state) }
+  if let accuracyM, accuracyM.isFinite, accuracyM > harshyWatchStartMaxAccuracyM {
+    return (false, state)
+  }
+  let from: HarshyLocationSample? = {
+    guard let lastT = state.lastT, let lastLat = state.lastLat, let lastLon = state.lastLon else {
+      return nil
+    }
+    return HarshyLocationSample(t: lastT, lat: lastLat, lon: lastLon)
+  }()
+  let speed = harshyWatchKinematicSpeed(from: from, t: t, lat: lat, lon: lon, reported: speedMps)
+  var pinned = state
+  pinned.lastLat = lat
+  pinned.lastLon = lon
+  pinned.lastT = t
+  let walkingLike = activity == "walking" || activity == "running"
+  let blocked = activity == "cycling" || walkingLike
+  if blocked && !(walkingLike && speed != nil && speed! >= harshyWatchVehicleSpeedMps) {
+    pinned.movingSinceMs = nil
+    pinned.distanceM = 0
+    return (false, pinned)
+  }
+  guard let speed, speed.isFinite else {
+    if from != nil {
+      pinned.movingSinceMs = nil
+      pinned.distanceM = 0
+    }
+    return (false, pinned)
+  }
+  if speed < harshyWatchVehicleSpeedMps {
+    pinned.movingSinceMs = nil
+    pinned.distanceM = 0
+    return (false, pinned)
+  }
+  var distance = state.distanceM
+  if let lastLat = state.lastLat, let lastLon = state.lastLon {
+    let previous = HarshyLocationSample(t: state.lastT ?? t, lat: lastLat, lon: lastLon)
+    let current = HarshyLocationSample(t: t, lat: lat, lon: lon)
+    distance += harshyHaversineM(previous, current)
+  }
+  let movingSince = state.movingSinceMs ?? t
+  pinned.movingSinceMs = movingSince
+  pinned.distanceM = distance
+  let held = t - movingSince >= harshyWatchStartHoldMs
+  return (held && distance >= harshyWatchStartDistanceM, pinned)
+}
+
+private func harshyWatchKinematicSpeed(
+  from: HarshyLocationSample?,
+  t: Double,
+  lat: Double,
+  lon: Double,
+  reported: Double?
+) -> Double? {
+  let hasReported = reported != nil && reported!.isFinite && reported! >= 0
+  if hasReported && reported! >= 0.5 {
+    return reported
+  }
+  if let from {
+    let dtSec = (t - from.t) / 1000
+    if dtSec >= 0.05 && dtSec <= 60 {
+      let current = HarshyLocationSample(t: t, lat: lat, lon: lon)
+      let inferred = harshyHaversineM(from, current) / dtSec
+      if inferred.isFinite { return inferred }
+    }
+  }
+  return hasReported ? reported : nil
+}
 
 func harshyCoordinateFractionDigits(_ value: Double) -> Int {
   guard value.isFinite else { return 0 }
@@ -96,6 +189,45 @@ func harshyIsCoarseNetworkLikeFix(_ sample: HarshyLocationSample) -> Bool {
   }
   return harshyCoordinateFractionDigits(sample.lat) <= harshyDriveFixCoarseFractionDigits ||
     harshyCoordinateFractionDigits(sample.lon) <= harshyDriveFixCoarseFractionDigits
+}
+
+func harshyIsSuspiciousSpeedLeap(
+  _ from: HarshyLocationSample,
+  _ to: HarshyLocationSample
+) -> Bool {
+  guard let prev = from.speedMps, let next = to.speedMps, prev.isFinite, next.isFinite else {
+    return false
+  }
+  let dtSec = (to.t - from.t) / 1000
+  guard dtSec.isFinite, dtSec >= 0, dtSec <= harshyDriveFixAccelMaxDtSec else {
+    return false
+  }
+  let dt = max(dtSec, 0.05)
+  let reportedAccel = abs(next - prev) / dt
+  if reportedAccel <= harshyDriveFixMaxAccelMps2 {
+    return false
+  }
+  let impliedAccel = abs(harshyHaversineM(from, to) / dt - prev) / dt
+  return impliedAccel > harshyDriveFixMaxAccelMps2
+}
+
+func harshySpeedLeapHolds(
+  anchor: HarshyLocationSample,
+  leap: HarshyLocationSample,
+  next: HarshyLocationSample
+) -> Bool {
+  guard harshyIsSuspiciousSpeedLeap(anchor, leap) else {
+    return true
+  }
+  if let leapSpeed = leap.speedMps, let nextSpeed = next.speedMps,
+    leapSpeed.isFinite, nextSpeed.isFinite,
+    nextSpeed >= leapSpeed * harshyDriveFixSpeedHoldRatio {
+    return true
+  }
+  let out = harshyHaversineM(anchor, leap)
+  let back = harshyHaversineM(anchor, next)
+  let onward = harshyHaversineM(leap, next)
+  return out >= 1 && back > out * 0.85 && onward > out * 0.35
 }
 
 func harshyIsPlausibleDriveStep(_ from: HarshyLocationSample, _ to: HarshyLocationSample) -> Bool {

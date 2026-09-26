@@ -52,9 +52,11 @@ class HarshyNativeModule : Module() {
       engine().stopPreview()
     }
 
-    AsyncFunction("stop") {
+    AsyncFunction("stop") { options: Map<String, Any?>? ->
       // Live JS analyzer already holds a capped ring; skip bridging full IMU.
-      engine().stop(includeImu = false)
+      // Auto re-arm keeps the location FGS so we do not startForegroundService in the background.
+      val handoff = options?.get("handoffToWatch") as? Boolean ?: false
+      engine().stop(includeImu = false, handoffToWatch = handoff)
     }
 
     AsyncFunction("getSnapshot") {
@@ -74,7 +76,7 @@ class HarshyNativeModule : Module() {
         ?: appContext.currentActivity?.applicationContext
         ?: return@AsyncFunction
       val label = context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty()
-        .ifBlank { "Harshy" }
+        .ifBlank { "Signumb" }
       com.harshy.engine.TripLiveDisplay.update(
         context,
         com.harshy.sdk.tripLivePayloadFromMap(payload, label),

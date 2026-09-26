@@ -44,6 +44,29 @@ final class HarshySampleMapsTests: XCTestCase {
     XCTAssertEqual(harshyParseTripTrigger(nil), "manual")
   }
 
+  func testWatchStartsAfterHoldAndDistance() {
+    let first = harshyWatchShouldStart(
+      HarshyWatchStartState(),
+      t: 0,
+      lat: 0,
+      lon: 0,
+      speedMps: 4,
+      accuracyM: 5,
+      activity: "unknown"
+    )
+    XCTAssertFalse(first.start)
+    let second = harshyWatchShouldStart(
+      first.state,
+      t: 6_000,
+      lat: 0,
+      lon: 0.0006,
+      speedMps: 4,
+      accuracyM: 5,
+      activity: "unknown"
+    )
+    XCTAssertTrue(second.start)
+  }
+
   func testWatchKinematicActivityIgnoresWalkingAtVehicleSpeed() {
     XCTAssertEqual(harshyWatchKinematicActivity("walking", speedMps: 12), "unknown")
     XCTAssertEqual(harshyWatchKinematicActivity("walking", speedMps: 10.0 / 3.6), "unknown")

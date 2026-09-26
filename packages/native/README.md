@@ -183,7 +183,7 @@ Host apps should depend on `@harshy/native` directly so Expo autolinking can see
 
 ## Automatic trips
 
-`HarshyEngine` implements a sparse MotionWatch (`armWatch` / `disarmWatch`) used by the Expo module. It must not start the trip FGS, IMU sampler, or `harshy-trip/` journal. Native `HarshyClient` stays start/stop/recover — JS `createHarshy` owns the start/stop heuristic. Full GPS+IMU and the trip FGS still start only in `start()` and end in `stop()`, except Expo `startPreview` / `stopPreview` (foreground GPS+IMU readout, not a trip, no FGS/journal). The Android trip journal stores `trigger` so recover after process death keeps auto vs manual. See [Automatic trips](../../docs/features/auto-trip.md).
+`HarshyEngine` implements a sparse MotionWatch (`armWatch` / `disarmWatch`) used by the Expo module. It must not start the trip FGS, IMU sampler, or `harshy-trip/` journal. Native `HarshyClient` stays start/stop/recover — JS `createHarshy` owns the start/stop heuristic. Full GPS+IMU and the trip FGS still start only in `start()` and end in `stop()`, except Expo `startPreview` / `stopPreview` (foreground GPS+IMU readout, not a trip, no FGS/journal) and Android `stop({ handoffToWatch: true })`, which keeps the location service and shows “Waiting for a drive”. The Android trip journal stores `trigger` so recover after process death keeps auto vs manual. See [Automatic trips](../../docs/features/auto-trip.md).
 
 ## Tests
 

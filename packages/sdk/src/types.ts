@@ -76,7 +76,7 @@ export type HarshyListeners = {
 
 export type HarshyClientState = {
   running: boolean;
-  /** Foreground GPS+IMU readout (not a trip). */
+  /** Foreground GPS+IMU readout (Signumb Sensors). Never a trip. */
   previewing: boolean;
   source: HarshySource | "native" | "simulated" | "idle";
   sessionId: string | null;
@@ -110,7 +110,8 @@ export type SensorEngine = {
    */
   startPreview?(options?: NativeStartOptions): Promise<void>;
   stopPreview?(): Promise<void>;
-  stop(): Promise<EngineSession>;
+  /** `handoffToWatch` keeps the Android location foreground service when Auto will re-arm. */
+  stop(options?: { handoffToWatch?: boolean }): Promise<EngineSession>;
   isRunning(): Promise<boolean>;
   getSnapshot(): Promise<EngineSession>;
   /** Optional: refresh lock-screen / FGS trip numbers while recording. */
@@ -130,6 +131,8 @@ export type SensorEngine = {
   subscribeWatch?(listeners: {
     onFix: (fix: WatchFix) => void;
     onError?: (error: { code: string; message: string }) => void;
+    /** Native watch started a trip while JS was suspended. */
+    onNativeRunning?: () => void;
   }): () => void;
 };
 

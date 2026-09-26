@@ -50,8 +50,9 @@ public class HarshyNativeModule: Module, HarshyEngine.Listener {
       self.engine.stopPreview()
     }
 
-    AsyncFunction("stop") {
+    AsyncFunction("stop") { (_: [String: Any]) in
       // Live JS analyzer already holds a capped ring; skip bridging full IMU.
+      // `handoffToWatch` is Android-only (keep the location FGS across an auto stop).
       return self.engine.stop(includeImu: false)
     }
 

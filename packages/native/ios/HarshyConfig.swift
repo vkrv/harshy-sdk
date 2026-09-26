@@ -1,6 +1,6 @@
 import Foundation
 
-public let harshyScorePenaltyX = 1.0 / 3.0
+public let harshyScorePenaltyX = 1.0 / 2.0
 
 public struct HarshyDetectorScoreWeights: Equatable, Sendable {
   public var start: Double

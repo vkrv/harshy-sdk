@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_DETECTOR_CONFIG, SCORE_PENALTY_X } from "./config.js";
-import { analyzeTrip, createTripAnalyzer, scoreEvents } from "./detector.js";
+import { analyzeTrip, createTripAnalyzer, eventScorePoints, scoreEvents } from "./detector.js";
 import { generateSampleTrip } from "./simulate.js";
 import type { DrivingEvent, ImuSample, LocationSample } from "./types.js";
 
@@ -234,13 +234,28 @@ describe("detector", () => {
     expect(tagged).toBeLessThan(plain);
   });
 
-  it("takes away one third of the event weight at the reference trip", () => {
+  it("takes away half of the event weight at the reference distance", () => {
     const score = scoreEvents([brake], DEFAULT_DETECTOR_CONFIG, {
       distanceM: 5_000,
       durationMs: 10 * 60_000,
     });
-    expect(SCORE_PENALTY_X).toBe(1 / 3);
+    expect(SCORE_PENALTY_X).toBe(1 / 2);
     expect(score).toBeCloseTo(100 - DEFAULT_DETECTOR_CONFIG.score.harshBrake * SCORE_PENALTY_X);
+  });
+
+  it("reports each event's points at the trip distance", () => {
+    expect(eventScorePoints(brake, DEFAULT_DETECTOR_CONFIG, 5_000)).toBeCloseTo(
+      DEFAULT_DETECTOR_CONFIG.score.harshBrake * SCORE_PENALTY_X,
+    );
+    expect(
+      eventScorePoints({ ...brake, type: "possible_impact", overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
+    ).toBe(0);
+    expect(
+      eventScorePoints({ ...brake, overlaps: ["harsh_corner"] }, DEFAULT_DETECTOR_CONFIG, 5_000),
+    ).toBeCloseTo(
+      (DEFAULT_DETECTOR_CONFIG.score.harshBrake + DEFAULT_DETECTOR_CONFIG.score.compound) *
+        SCORE_PENALTY_X,
+    );
   });
 
   it("gives a perfect score when there are no events, regardless of trip length", () => {
@@ -252,7 +267,7 @@ describe("detector", () => {
     ).toBe(100);
   });
 
-  it("penalizes the same events less on a longer, farther trip", () => {
+  it("penalizes the same events less on a farther trip", () => {
     const events = [brake, brake];
     const short = scoreEvents(events, DEFAULT_DETECTOR_CONFIG, {
       distanceM: 2_000,
@@ -267,7 +282,7 @@ describe("detector", () => {
     expect(long).toBeLessThanOrEqual(100);
   });
 
-  it("uses both distance and duration when scaling penalties", () => {
+  it("ignores duration when scaling penalties", () => {
     const events = [brake];
     const farQuick = scoreEvents(events, DEFAULT_DETECTOR_CONFIG, {
       distanceM: 40_000,
@@ -281,8 +296,8 @@ describe("detector", () => {
       distanceM: 40_000,
       durationMs: 40 * 60_000,
     });
-    expect(farSlow).toBeGreaterThan(farQuick);
-    expect(farSlow).toBeGreaterThan(nearSlow);
+    expect(farSlow).toBeCloseTo(farQuick);
+    expect(nearSlow).toBeLessThan(farSlow);
   });
 
   it("tags live accel, brake, and corner as within norm or a harsh band", () => {
@@ -393,6 +408,122 @@ describe("detector", () => {
     expect(session.location).toHaveLength(2);
     expect(session.location.some((sample) => sample.lat === 59.4395306)).toBe(false);
     expect(session.metrics.distanceM).toBeLessThan(50);
+  });
+
+  it("does not treat a GPS speed spike as max speed", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "speed-spike",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    analyzer.pushLocation({
+      t: 1_790_411_003_947,
+      lat: 59.4104282,
+      lon: 24.6768128,
+      altitudeM: null,
+      speedMps: 0.72,
+      courseDeg: 0,
+      accuracyM: 10.5,
+      altitudeAccuracyM: null,
+    });
+    analyzer.pushLocation({
+      t: 1_790_411_004_118,
+      lat: 59.4104768,
+      lon: 24.676784,
+      altitudeM: null,
+      speedMps: 33.01,
+      courseDeg: 0,
+      accuracyM: 15.9,
+      altitudeAccuracyM: null,
+    });
+    analyzer.pushLocation({
+      t: 1_790_411_004_676,
+      lat: 59.4104289,
+      lon: 24.6768066,
+      altitudeM: null,
+      speedMps: 0.64,
+      courseDeg: 0,
+      accuracyM: 10.7,
+      altitudeAccuracyM: null,
+    });
+    const session = analyzer.finalize(1_790_411_005_000);
+    expect(session.location).toHaveLength(2);
+    expect(session.metrics.maxSpeedMps).not.toBeNull();
+    expect(session.metrics.maxSpeedMps!).toBeLessThan(5);
+  });
+
+  it("drops a trailing speed leap that never gets a confirming fix", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "trailing-leap",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    analyzer.pushLocation({
+      t: 1_790_411_003_947,
+      lat: 59.4104282,
+      lon: 24.6768128,
+      altitudeM: null,
+      speedMps: 0.72,
+      courseDeg: 0,
+      accuracyM: 10.5,
+      altitudeAccuracyM: null,
+    });
+    analyzer.pushLocation({
+      t: 1_790_411_004_118,
+      lat: 59.4104768,
+      lon: 24.676784,
+      altitudeM: null,
+      speedMps: 33.01,
+      courseDeg: 0,
+      accuracyM: 15.9,
+      altitudeAccuracyM: null,
+    });
+    const session = analyzer.finalize(1_790_411_005_000);
+    expect(session.location).toHaveLength(1);
+    expect(session.metrics.maxSpeedMps!).toBeLessThan(5);
+  });
+
+  it("keeps a high speed when the next fix is still that fast", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "real-speed",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    analyzer.pushLocation({
+      t: 0,
+      lat: 59.4104282,
+      lon: 24.6768128,
+      altitudeM: null,
+      speedMps: 0.72,
+      courseDeg: 0,
+      accuracyM: 8,
+      altitudeAccuracyM: null,
+    });
+    const leap = analyzer.pushLocation({
+      t: 1_000,
+      lat: 59.4107,
+      lon: 24.6768,
+      altitudeM: null,
+      speedMps: 33,
+      courseDeg: 0,
+      accuracyM: 8,
+      altitudeAccuracyM: null,
+    });
+    expect(leap.metrics.speedMps ?? 0).toBeLessThan(5);
+    const held = analyzer.pushLocation({
+      t: 2_000,
+      lat: 59.41097,
+      lon: 24.6768,
+      altitudeM: null,
+      speedMps: 32,
+      courseDeg: 0,
+      accuracyM: 8,
+      altitudeAccuracyM: null,
+    });
+    expect(held.metrics.speedMps ?? 0).toBeGreaterThan(30);
+    const session = analyzer.finalize(3_000);
+    expect(session.location).toHaveLength(3);
+    expect(session.metrics.maxSpeedMps!).toBeGreaterThan(30);
   });
 
   it("fills live heading and g-force when GNSS omits bearing", () => {

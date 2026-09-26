@@ -100,12 +100,12 @@ Pass overrides to `arm({ heuristic })`. Expect on-road retune; these are a first
 
 ## Native MotionWatch
 
-Watch is a **separate** location path from trip capture. `start()` disarms the watch; `stop()` does not leave FGS running for Auto.
+Watch is a **separate** location path from trip capture. `start()` disarms the watch listeners. When Auto will re-arm, `stop({ handoffToWatch: true })` leaves the Android location foreground service running and swaps the notice to “Waiting for a drive”. A fresh `startForegroundService` after that stop is not allowed while the app is backgrounded (`ForegroundServiceStartNotAllowedException`). Manual mode still stops the service.
 
 | Platform | Watch APIs | Activity |
 |----------|------------|----------|
-| **iOS** | Separate `CLLocationManager`: significant-change (background) + ~25 m `startUpdatingLocation` (foreground). **No** `allowsBackgroundLocationUpdates` / blue indicator on the watch manager. Does not pause updates automatically. Watch fixes publish immediately; activity comes from the motion stream (not a per-fix query) | `CMMotionActivityManager` (automotive / walk / bike / run). Walking / running at vehicle speed is published as `unknown`. Missing motion still uses kinematics |
-| **Android** | Separate `LocationListener`: GPS + platform fused (API 31+, always registered) + network, using fused/network samples only when GPS is off/searching/silent, plus PASSIVE and `TYPE_SIGNIFICANT_MOTION` single-fix wakeups. Last-known older than 30 s is ignored. Searching GPS is not emitted when fused is registered. **No** trip FGS, wake lock, or `harshy-trip/` writes | `ACTIVITY_RECOGNITION` is requested and surfaced on existing `motion`. v1 classifies **walking** from the step detector unless GPS speed is already vehicular; otherwise `unknown`. No Play Services Activity Recognition |
+| **iOS** | Separate `CLLocationManager`: significant-change plus ~25 m updates with `allowsBackgroundLocationUpdates` while armed, so a locked phone still delivers fixes. The location indicator is on. Does not pause updates automatically. Watch fixes publish immediately; activity comes from the motion stream (not a per-fix query). When the probe gates pass, the engine calls `start(trigger: auto)` itself | `CMMotionActivityManager` (automotive / walk / bike / run). Walking / running at vehicle speed is published as `unknown`. Missing motion still uses kinematics |
+| **Android** | Separate `LocationListener`: GPS + platform fused (API 31+, always registered) + network, using fused/network samples only when GPS is off/searching/silent, plus PASSIVE and `TYPE_SIGNIFICANT_MOTION` single-fix wakeups. Last-known older than 30 s is ignored. Searching GPS is not emitted when fused is registered. While armed, the location foreground service stays up so fixes arrive with the screen locked. It shows “Waiting for a drive” until a trip starts. The engine calls `start(trigger: auto)` when the probe gates pass. No trip journal until that start | `ACTIVITY_RECOGNITION` is requested and surfaced on existing `motion`. v1 classifies **walking** from the step detector unless GPS speed is already vehicular; otherwise `unknown`. No Play Services Activity Recognition |
 
 `armWatch` throws if Always / background location is not granted. It no-ops while a trip is `running`. Denied motion does **not** fail `armWatch`.
 
@@ -117,14 +117,14 @@ Watch is a **separate** location path from trip capture. `start()` disarms the w
 |--------|-----|---------|------|
 | Background location | Always + (for a **trip**) `location` background mode | `ACCESS_BACKGROUND_LOCATION` | Armed watch: significant-change / sparse location. Trip: existing continuous + FGS |
 | Motion / activity | `CMMotionActivityManager` (`motion` on `PermissionResult`) | `ACTIVITY_RECOGNITION` on `motion` (API 29+; granted below 29) | Soft automotive vs walk/bike |
-| Notifications | n/a | Trip FGS notice (unchanged) | **Trip only**, not watch |
+| Notifications | n/a | Location FGS notice: “Waiting for a drive” while armed, trip numbers while recording | Armed watch and trip |
 
 Do not prompt from `arm()` itself — hosts call `requestPermissions()` first.
 
 ## Battery / privacy
 
 - Watch is **duty-cycled OS APIs**, not 50 Hz IMU and not 2 Hz GPS. Budget is closer to significant-location / activity transitions than to a trip.
-- No trip journal and no sticky FGS while armed — Android background location without a `location` FGS is sparse by OS policy; auto start may lag after entering a car. That is accepted for v1.
+- While Auto is armed, Android keeps a location foreground service (“Waiting for a drive”) and iOS keeps background location updates. That is what lets a trip start with the app closed or the phone locked. The trip journal still begins only when the probe starts the trip.
 - Privacy: Auto means the OS may wake the app on motion **without** a user tap. Hosts should make Auto an explicit setting (default Manual) and explain Always location if they expose Auto.
 - Local-first export is unchanged: auto only triggers the same start → stop → `SessionExport` path. Nothing is uploaded unless the host set `UploadAdapter`.
 
@@ -162,14 +162,14 @@ await harshy.disarm();
 
 - `shouldStartTrip` / `shouldEndTrip`: probe 5 s / 40 m, commit 20 s / 150 m, speed reset, walk block, poor accuracy, dwell vs traffic crawl, default 10 min park, warmup 30 s abort, idle-tail trim helpers
 - Zod: older JSON without `trigger` → `manual`; `schemaVersion` 1; `trigger: "auto"` round-trips
-- SDK: default disarmed; `arm` → armed; manual `start` while Auto → suppressed + `trigger: "manual"`; `stop` re-arms; `disarm` does not stop a trip; watch double auto-starts with `trigger: "auto"` and `phase: "warmup"`; keep driving → `recording`; park 30 s in warmup discards (`getLastSession()` unchanged) and re-arms; auto-stop after 10 min park (after commit) drops that dwell from the session; `recover()` of an uncommitted parked journal discards; `armWatch` failure reverts to manual
+- SDK: default disarmed; `arm` → armed; manual `start` while Auto → suppressed + `trigger: "manual"`; `stop` re-arms and passes `handoffToWatch` while mode is auto; manual `stop` does not; `disarm` does not stop a trip; watch double auto-starts with `trigger: "auto"` and `phase: "warmup"`; keep driving → `recording`; park 30 s in warmup discards (`getLastSession()` unchanged) and re-arms; auto-stop after 10 min park (after commit) drops that dwell from the session; `recover()` of an uncommitted parked journal discards; `armWatch` failure reverts to manual
 - Android `WatchFixMaps.activityFromSteps`
 - Android journal `meta.json` `trigger` round-trip; native session JSON emits `trigger`; SDK `recover()` keeps snapshot `trigger`
 
 **Device (soak)**
 
-- `arm()` does not start trip FGS, Live Activity, or `harshy-trip/` journal
-- Auto start does start FGS / journal / Live Activity; `stop` tears them down and re-arms
+- `arm()` starts the Android watch location foreground service (“Waiting for a drive”), not the trip journal or iOS Live Activity
+- Auto start keeps that service, starts the journal / Live Activity; auto `stop` swaps the notice back and re-arms without `startForegroundService`
 - Manual Start while Armed suppresses until Stop
 - `recover()` mid-trip still attaches with the journaled `trigger`; armed-only process death does not restore a trip
 - Walk / bike with activity does not start; a false-start warmup aborts after ~30 s parked and is not persisted; parking 10+ min ends a committed auto trip and omits those parked minutes

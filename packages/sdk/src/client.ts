@@ -67,7 +67,7 @@ export type HarshyClient = {
    * a trip is running.
    */
   startPreview: (options?: HarshyStartOptions) => Promise<void>;
-  /** Stop a foreground sensor readout. Does not stop a running trip. */
+  /** Stop a Sensors-tab readout. Does not stop a running trip. */
   stopPreview: () => Promise<void>;
   /** Attach to a native trip that survived process death. Returns true when capture is live. */
   recover: (options?: HarshyStartOptions) => Promise<boolean>;
@@ -112,13 +112,13 @@ export type CreateHarshyDeps = {
   /**
    * Durable trip archive (one JSON file per session + `index.json`).
    * `stop()` / idle `retune()` write a compact copy (no IMU).
-   * If the host already persists trips, do not also pass `historyStore`.
+   * Signumb keeps its own LabRecording archive — do not pass this from the lab client.
    */
   historyStore?: JsonFileStore;
   maxHistory?: number;
-  /** App name on the trip notification / Live Activity. Defaults to Harshy. */
+  /** App name on the trip notification / Live Activity. Defaults to Signumb. */
   liveDisplayTitle?: string;
-  /** Override metric formatting (for example imperial units). */
+  /** Override metric formatting (e.g. imperial units in Signumb). */
   formatLiveDisplay?: (metrics: LiveMetrics, title: string) => TripLiveDisplayPayload;
 };
 
@@ -170,7 +170,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
   let sessionId: string | null = null;
   const listeners = new Set<HarshyListeners>();
   let lastLivePublishMs = 0;
-  const liveTitle = deps.liveDisplayTitle ?? "Harshy";
+  const liveTitle = deps.liveDisplayTitle ?? "Signumb";
   const formatLive =
     deps.formatLiveDisplay ?? ((metrics: LiveMetrics, title: string) => formatTripLiveDisplay(metrics, title));
   let nativeImuHz = mergeNativeStartOptions(deps.native).imuHz;
@@ -277,7 +277,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
         const decided = shouldStartTrip(startHeuristic, fix, heuristicConfig);
         startHeuristic = decided.state;
         emitWatchState();
-        if (!decided.start) {
+        if (!decided.start || engine?.kind === "native") {
           return;
         }
         startingFromWatch = true;
@@ -294,6 +294,17 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
         for (const listener of listeners) {
           listener.onError?.(error);
         }
+      },
+      onNativeRunning: () => {
+        if (running || recordingMode !== "auto") {
+          return;
+        }
+        void attachIfRunning().catch((error) => {
+          const message = error instanceof Error ? error.message : "Automatic start failed";
+          for (const listener of listeners) {
+            listener.onError?.({ code: "auto_start", message });
+          }
+        });
       },
     });
   };
@@ -768,7 +779,9 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
         endingFromWatch &&
         priorRaw?.trigger === "auto" &&
         idleStartedAtMs != null;
-      const raw = engine ? await engine.stop() : null;
+      const raw = engine
+        ? await engine.stop({ handoffToWatch: recordingMode === "auto" })
+        : null;
       void engine?.clearLiveDisplay?.();
       lastLivePublishMs = 0;
       unsubscribeEngine?.();

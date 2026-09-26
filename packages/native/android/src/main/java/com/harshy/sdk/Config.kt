@@ -1,7 +1,7 @@
 package com.harshy.sdk
 
-/** Event penalties apply at 1/3 so everyday driving stays in a high score band. */
-const val SCORE_PENALTY_X = 1.0 / 3.0
+/** Event penalties apply at 1/2. */
+const val SCORE_PENALTY_X = 1.0 / 2.0
 
 data class DetectorScoreWeights(
   val start: Double = 100.0,

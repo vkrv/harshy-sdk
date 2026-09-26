@@ -1,6 +1,11 @@
 import { tagCompoundOverlaps } from "./compound.js";
 import { mergeDetectorConfig, SCORE_PENALTY_X } from "./config.js";
-import { lastLocationAnchor, shouldAcceptDriveFix } from "./drivePath.js";
+import {
+  isSuspiciousSpeedLeap,
+  lastLocationAnchor,
+  shouldAcceptDriveFix,
+  speedLeapHolds,
+} from "./drivePath.js";
 import {
   clamp,
   derivedCourseDeg,
@@ -66,6 +71,8 @@ type AnalyzerState = {
   location: LocationSample[];
   imu: ImuSample[];
   events: DrivingEvent[];
+  /** Sharp speed step waiting for the next fix to confirm or drop it. */
+  heldSpeedLeap: LocationSample | null;
   lastEventAt: Partial<Record<DrivingEventType, number>>;
   lastEventLevel: Partial<Record<DrivingEventType, HarshEventLevel>>;
   openSpeeding: DrivingEvent | null;
@@ -629,10 +636,9 @@ export function scoreExposureScale(
   durationMs: number,
   config: DetectorConfig,
 ): number {
+  void durationMs;
   const km = Math.max(distanceM / 1000, config.score.minDistanceKm);
-  const minutes = Math.max(durationMs / 60_000, config.score.minDurationMin);
-  const exposure =
-    (km / config.score.refDistanceKm + minutes / config.score.refDurationMin) / 2;
+  const exposure = km / config.score.refDistanceKm;
   return clamp(1 / Math.max(exposure, 1e-6), 0.2, 4);
 }
 
@@ -650,6 +656,21 @@ export function scoreEvents(
   }
   const scale = scoreExposureScale(exposure.distanceM, exposure.durationMs, config);
   return clamp(config.score.start - penalty * scale * SCORE_PENALTY_X, 0, 100);
+}
+
+/** Points this event subtracts at the trip's current distance. Impact and phone use are 0. */
+export function eventScorePoints(
+  event: Pick<DrivingEvent, "type" | "severity" | "overlaps">,
+  config: DetectorConfig,
+  distanceM: number,
+): number {
+  const severity = Number.isFinite(event.severity) ? Math.min(1, Math.max(0, event.severity)) : 0;
+  let raw = eventWeight(event.type, config) * (0.4 + 0.6 * severity);
+  if (event.overlaps.length > 0) {
+    raw += config.score.compound;
+  }
+  const scale = scoreExposureScale(distanceM, 0, config);
+  return raw * scale * SCORE_PENALTY_X;
 }
 
 export function eventCounts(
@@ -733,20 +754,10 @@ export function createTripAnalyzer(
     maxSpeedMps: null,
     speedSum: 0,
     speedCount: 0,
+    heldSpeedLeap: null,
   };
 
-  const pushLocation = (sample: LocationSample) => {
-    const decision = shouldAcceptDriveFix(
-      lastLocationAnchor(state.location),
-      sample,
-      state.locationRejects,
-    );
-    state.locationRejects = decision.rejects;
-    if (!decision.accept) {
-      const t =
-        state.lastGoodLocation?.t ?? state.lastImu?.t ?? state.startedAtMs;
-      return { metrics: buildMetrics(state, t), newEvents: [] };
-    }
+  const commitLocation = (sample: LocationSample) => {
 
     const withRoad: LocationSample = {
       ...sample,
@@ -786,6 +797,38 @@ export function createTripAnalyzer(
     const impact = resolvePendingImpact(state, withRoad.t, false);
     const newEvents = impact ? [...motion, impact] : motion;
     return { metrics: buildMetrics(state, withRoad.t), newEvents };
+  };
+
+  const pushLocation = (sample: LocationSample) => {
+    const carried: DrivingEvent[] = [];
+    if (state.heldSpeedLeap) {
+      const held = state.heldSpeedLeap;
+      state.heldSpeedLeap = null;
+      const anchor = lastLocationAnchor(state.location);
+      if (anchor == null || speedLeapHolds(anchor, held, sample)) {
+        carried.push(...commitLocation(held).newEvents);
+      }
+    }
+
+    const anchor = lastLocationAnchor(state.location);
+    const decision = shouldAcceptDriveFix(anchor, sample, state.locationRejects);
+    state.locationRejects = decision.rejects;
+    if (!decision.accept) {
+      const t =
+        state.lastGoodLocation?.t ?? state.lastImu?.t ?? state.startedAtMs;
+      return { metrics: buildMetrics(state, t), newEvents: carried };
+    }
+    if (anchor != null && isSuspiciousSpeedLeap(anchor, sample)) {
+      state.heldSpeedLeap = sample;
+      const t =
+        state.lastGoodLocation?.t ?? state.lastImu?.t ?? state.startedAtMs;
+      return { metrics: buildMetrics(state, t), newEvents: carried };
+    }
+    const committed = commitLocation(sample);
+    return {
+      metrics: committed.metrics,
+      newEvents: [...carried, ...committed.newEvents],
+    };
   };
 
   const pushImu = (sample: ImuSample) => {

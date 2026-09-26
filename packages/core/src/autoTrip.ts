@@ -24,8 +24,8 @@ export type WatchFix = {
 };
 
 /**
- * v1 start/stop tunables. Hosts can retune later without forking the heuristic.
- * Not part of `DetectorConfig`.
+ * v1 start/stop tunables. Marked clearly so Signumb / hosts can retune later
+ * without forking the heuristic. Not part of `DetectorConfig`.
  */
 export type TripHeuristicConfig = {
   /** Speed that counts as driving (10 km/h). A typical walk stays below this. */

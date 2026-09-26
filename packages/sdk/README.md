@@ -179,7 +179,7 @@ const session = await harshy.stop();
 // session.config: DetectorConfig used
 ```
 
-`stop()` finalizes the trip, re-runs analysis on recorded samples, and returns a `SessionExport`.
+`stop()` finalizes the trip, re-runs analysis on recorded samples, and returns a `SessionExport`. `stop({ handoffToWatch: true })` keeps the Android location foreground service up and swaps its notice to “Waiting for a drive” so Auto can re-arm while the app is backgrounded. Manual stop omits that option and stops the service.
 
 ### Recovering from Process Death (Android)
 
@@ -690,7 +690,7 @@ type CreateHarshyDeps = {
 | `stopPreview()` | Stop that readout; does not stop a running trip |
 | `recover(options?)` | Attach to a surviving native trip |
 | `getLiveLocation()` | GPS samples for the in-progress trip (empty when idle). `recover()` does not replay journal fixes on `onLocation` |
-| `stop()` | Stop and return session export |
+| `stop(options?)` | Stop and return session export. `handoffToWatch: true` keeps the Android location foreground service for Auto |
 | `arm(options?)` | Opt in to Auto (preview watch; default client is manual) |
 | `disarm()` | Leave Auto; does not stop a running trip |
 | `getWatchState()` | `disarmed` / `armed` / `recording` plus `trigger`, `lastFix`, start hold/distance |

@@ -104,12 +104,13 @@ export type DetectorScoreWeights = {
   jerk: number;
   /** Extra penalty when a kinematic event overlaps another type. */
   compound: number;
-  /** Distance at which event penalties are applied 1:1. */
+  /** Distance at which event penalties are applied 1:1. Duration does not scale the score. */
   refDistanceKm: number;
-  /** Duration at which event penalties are applied 1:1. */
+  /** Kept so older session JSON still parses. Not used in the score. */
   refDurationMin: number;
   /** Floor so a 50 m start does not explode live penalties. */
   minDistanceKm: number;
+  /** Kept so older session JSON still parses. Not used in the score. */
   minDurationMin: number;
 };
 

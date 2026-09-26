@@ -33,6 +33,7 @@ public final class HarshyTripAnalyzer {
   private var maxSpeedMps: Double?
   private var speedSum = 0.0
   private var speedCount = 0
+  private var heldSpeedLeap: HarshyLocationSample?
 
   public init(
     config: HarshyDetectorConfig?,
@@ -63,17 +64,36 @@ public final class HarshyTripAnalyzer {
 
   @discardableResult
   public func pushLocation(_ sample: HarshyLocationSample) -> HarshyAnalyzerPush {
+    var carried: [HarshyDrivingEvent] = []
+    if let pending = heldSpeedLeap {
+      heldSpeedLeap = nil
+      let prior = location.last
+      if prior == nil || harshySpeedLeapHolds(anchor: prior!, leap: pending, next: sample) {
+        carried.append(contentsOf: commitLocation(pending).newEvents)
+      }
+    }
+
+    let anchor = location.last
     let decision = harshyShouldAcceptDriveFix(
-      anchor: location.last,
+      anchor: anchor,
       sample: sample,
       consecutiveRejects: locationRejects
     )
     locationRejects = decision.rejects
     if !decision.accept {
       let t = lastGoodLocation?.t ?? lastImu?.t ?? startedAtMs
-      return HarshyAnalyzerPush(metrics: buildMetrics(t), newEvents: [])
+      return HarshyAnalyzerPush(metrics: buildMetrics(t), newEvents: carried)
     }
+    if let anchor, harshyIsSuspiciousSpeedLeap(anchor, sample) {
+      heldSpeedLeap = sample
+      let t = lastGoodLocation?.t ?? lastImu?.t ?? startedAtMs
+      return HarshyAnalyzerPush(metrics: buildMetrics(t), newEvents: carried)
+    }
+    let committed = commitLocation(sample)
+    return HarshyAnalyzerPush(metrics: committed.metrics, newEvents: carried + committed.newEvents)
+  }
 
+  private func commitLocation(_ sample: HarshyLocationSample) -> HarshyAnalyzerPush {
     var stored = sample
     stored.speedMps = harshyDerivedSpeedMps(from: lastGoodLocation, to: sample) ?? stored.speedMps
     stored.courseDeg = harshyDerivedCourseDeg(from: lastGoodLocation, to: sample) ?? stored.courseDeg
@@ -559,12 +579,11 @@ public func harshyCreateTripAnalyzer(
 
 public func harshyScoreExposureScale(
   distanceM: Double,
-  durationMs: Double,
+  durationMs _: Double,
   config: HarshyDetectorConfig
 ) -> Double {
   let km = max(distanceM / 1000, config.score.minDistanceKm)
-  let minutes = max(durationMs / 60_000, config.score.minDurationMin)
-  let exposure = (km / config.score.refDistanceKm + minutes / config.score.refDurationMin) / 2
+  let exposure = km / config.score.refDistanceKm
   return harshyClamp(1 / max(exposure, 1e-6), 0.2, 4)
 }
 

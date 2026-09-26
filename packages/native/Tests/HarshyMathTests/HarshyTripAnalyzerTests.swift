@@ -294,6 +294,36 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertNotNil(metrics.lateralAccelMps2)
   }
 
+  func testSpeedLeapNeedsTheNextFix() {
+    let from = HarshyLocationSample(
+      t: 1_790_411_003_947,
+      lat: 59.4104282,
+      lon: 24.6768128,
+      speedMps: 0.72,
+      accuracyM: 10.5
+    )
+    let leap = HarshyLocationSample(
+      t: 1_790_411_004_118,
+      lat: 59.4104768,
+      lon: 24.676784,
+      speedMps: 33.01,
+      accuracyM: 15.9
+    )
+    let back = HarshyLocationSample(
+      t: 1_790_411_004_676,
+      lat: 59.4104289,
+      lon: 24.6768066,
+      speedMps: 0.64,
+      accuracyM: 10.7
+    )
+    XCTAssertTrue(harshyIsPlausibleDriveStep(from, leap))
+    XCTAssertTrue(harshyIsSuspiciousSpeedLeap(from, leap))
+    XCTAssertFalse(harshySpeedLeapHolds(anchor: from, leap: leap, next: back))
+    let kept = HarshyLocationSample(t: 1_790_411_004_947, lat: 59.4107, lon: 24.6768, speedMps: 33)
+    let still = HarshyLocationSample(t: 1_790_411_005_947, lat: 59.41097, lon: 24.6768, speedMps: 32)
+    XCTAssertTrue(harshySpeedLeapHolds(anchor: from, leap: kept, next: still))
+  }
+
   func testSessionJsonIncludesTrigger() {
     let session = harshyAnalyzeTrip(
       location: [loc(0, speedMps: 5)],

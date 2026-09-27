@@ -34,6 +34,8 @@ public final class HarshyTripAnalyzer {
   private var speedSum = 0.0
   private var speedCount = 0
   private var heldSpeedLeap: HarshyLocationSample?
+  private var smoothHold: [String: SmoothHold] = [:]
+  private var smoothCreditAtM: [String: Double] = [:]
 
   public init(
     config: HarshyDetectorConfig?,
@@ -114,7 +116,7 @@ public final class HarshyTripAnalyzer {
     longitudinalAccelMps2 = accel.longitudinal
     lateralAccelMps2 = accel.lateral
     yawRateRadps = accel.yawRateRadps
-    let motion = detectFromMotion(stored.t)
+    let motion = detectFromMotion(stored.t, includeSmooth: true)
     let impact = resolvePendingImpact(now: stored.t, force: false)
     let newEvents = impact.map { motion + [$0] } ?? motion
     return HarshyAnalyzerPush(metrics: buildMetrics(stored.t), newEvents: newEvents)
@@ -330,7 +332,7 @@ public final class HarshyTripAnalyzer {
     return nil
   }
 
-  private func detectFromMotion(_ t: Double) -> [HarshyDrivingEvent] {
+  private func detectFromMotion(_ t: Double, includeSmooth: Bool = false) -> [HarshyDrivingEvent] {
     var emitted: [HarshyDrivingEvent] = []
     let speed = currentSpeed()
     let moving = speed != nil && speed! >= config.minSpeedMps
@@ -410,6 +412,85 @@ public final class HarshyTripAnalyzer {
       ) {
         emitted.append(event)
       }
+    }
+    if includeSmooth {
+      emitted.append(contentsOf: updateSmoothCredits(t: t, moving: moving, loc: loc, speed: speed))
+    }
+    return emitted
+  }
+
+  private struct SmoothHold {
+    var sinceT: Double
+    var sinceDistanceM: Double
+    var peak: Double
+  }
+
+  private func smoothMagnitude(type: String, longitudinal: Double?, lateral: Double?) -> Double? {
+    let magnitude: Double
+    let harsh: Double
+    switch type {
+    case harshyEventSmoothAccel:
+      guard let longitudinal, longitudinal > 0 else { return nil }
+      magnitude = longitudinal
+      harsh = config.harshAccelMps2
+    case harshyEventSmoothBrake:
+      guard let longitudinal, longitudinal < 0 else { return nil }
+      magnitude = -longitudinal
+      harsh = config.harshBrakeMps2
+    default:
+      guard let lateral else { return nil }
+      magnitude = abs(lateral)
+      harsh = config.harshCornerMps2
+    }
+    let ceiling = harsh * harshySmoothCeilingX
+    if ceiling < harshySmoothFloorMps2 || magnitude < harshySmoothFloorMps2 || magnitude > ceiling {
+      return nil
+    }
+    return magnitude
+  }
+
+  private func updateSmoothCredits(
+    t: Double,
+    moving: Bool,
+    loc: HarshyLocationSample?,
+    speed: Double?
+  ) -> [HarshyDrivingEvent] {
+    var emitted: [HarshyDrivingEvent] = []
+    for type in [harshyEventSmoothAccel, harshyEventSmoothBrake, harshyEventSmoothCorner] {
+      let magnitude = moving ? smoothMagnitude(type: type, longitudinal: longitudinalAccelMps2, lateral: lateralAccelMps2) : nil
+      guard let magnitude else {
+        smoothHold.removeValue(forKey: type)
+        continue
+      }
+      guard var hold = smoothHold[type] else {
+        smoothHold[type] = SmoothHold(sinceT: t, sinceDistanceM: distanceM, peak: magnitude)
+        continue
+      }
+      hold.peak = max(hold.peak, magnitude)
+      smoothHold[type] = hold
+      let heldMs = t - hold.sinceT
+      let movedM = distanceM - hold.sinceDistanceM
+      if heldMs < harshySmoothHoldMs || movedM < harshySmoothHoldMinM {
+        continue
+      }
+      if let lastCreditM = smoothCreditAtM[type], distanceM - lastCreditM < harshySmoothGapM {
+        continue
+      }
+      let event = HarshyDrivingEvent(
+        id: "\(type)-\(t)",
+        type: type,
+        t: t,
+        peak: hold.peak,
+        severity: 0,
+        level: "light",
+        lat: loc?.lat,
+        lon: loc?.lon,
+        speedMps: speed
+      )
+      events.append(event)
+      smoothCreditAtM[type] = distanceM
+      smoothHold.removeValue(forKey: type)
+      emitted.append(event)
     }
     return emitted
   }
@@ -613,21 +694,37 @@ public func harshyScoreExposureScale(
   return harshyClamp(1 / max(exposure, 1e-6), 0.2, 4)
 }
 
+public func harshyEventScorePoints(
+  _ event: HarshyDrivingEvent,
+  config: HarshyDetectorConfig,
+  distanceM: Double
+) -> Double {
+  let scale = harshyScoreExposureScale(distanceM: distanceM, durationMs: 0, config: config)
+  let weight = harshyEventWeight(event.type, config: config)
+  if event.type == harshyEventSmoothAccel || event.type == harshyEventSmoothBrake || event.type == harshyEventSmoothCorner {
+    return weight * scale * harshyScorePenaltyX
+  }
+  let severity = event.severity.isFinite ? min(1, max(0, event.severity)) : 0
+  var raw = weight * (0.4 + 0.6 * severity)
+  if !event.overlaps.isEmpty {
+    raw += config.score.compound
+  }
+  let points = -(raw * scale * harshyScorePenaltyX)
+  return points == 0 ? 0 : points
+}
+
 public func harshyScoreEvents(
   _ events: [HarshyDrivingEvent],
   config: HarshyDetectorConfig,
   distanceM: Double,
   durationMs: Double
 ) -> Double {
-  var penalty = 0.0
+  _ = durationMs
+  var delta = 0.0
   for event in events {
-    penalty += harshyEventWeight(event.type, config: config) * (0.4 + 0.6 * event.severity)
-    if !event.overlaps.isEmpty {
-      penalty += config.score.compound
-    }
+    delta += harshyEventScorePoints(event, config: config, distanceM: distanceM)
   }
-  let scale = harshyScoreExposureScale(distanceM: distanceM, durationMs: durationMs, config: config)
-  return harshyClamp(config.score.start - penalty * scale * harshyScorePenaltyX, 0, 100)
+  return harshyClamp(config.score.start + delta, 0, harshyScoreMax)
 }
 
 public func harshyEventCounts(_ events: [HarshyDrivingEvent]) -> [String: Int] {
@@ -686,6 +783,9 @@ func harshyEventWeight(_ type: String, config: HarshyDetectorConfig) -> Double {
   case harshyEventJerk: return config.score.jerk
   case harshyPossibleImpactType: return 0
   case harshyPhoneHandheldType: return 0
+  case harshyEventSmoothAccel: return config.score.smoothAccel
+  case harshyEventSmoothBrake: return config.score.smoothBrake
+  case harshyEventSmoothCorner: return config.score.smoothCorner
   default: return 0
   }
 }

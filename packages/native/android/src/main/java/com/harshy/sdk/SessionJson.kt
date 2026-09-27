@@ -86,7 +86,10 @@ private fun DetectorConfig.toJsonObject(): JSONObject {
         .put("refDistanceKm", score.refDistanceKm)
         .put("refDurationMin", score.refDurationMin)
         .put("minDistanceKm", score.minDistanceKm)
-        .put("minDurationMin", score.minDurationMin),
+        .put("minDurationMin", score.minDurationMin)
+        .put("smoothAccel", score.smoothAccel)
+        .put("smoothBrake", score.smoothBrake)
+        .put("smoothCorner", score.smoothCorner),
     )
 }
 

@@ -394,4 +394,20 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertEqual(harshyParseTripTrigger(session.trigger), "auto")
     XCTAssertEqual(session.toJSONObject()["trigger"] as? String, "auto")
   }
+
+  func testRecordsOneGentleAccelThenWaits() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "smooth",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    for step in 0...6 {
+      _ = analyzer.pushLocation(loc(Double(step) * 1000, speedMps: 10 + Double(step)))
+    }
+    let session = analyzer.finalize(endedAtMs: 7000)
+    XCTAssertEqual(session.events.filter { $0.type == harshyEventSmoothAccel }.count, 1)
+    XCTAssertGreaterThan(session.metrics.score, 100)
+    XCTAssertLessThanOrEqual(session.metrics.score, harshyScoreMax)
+  }
 }

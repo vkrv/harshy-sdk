@@ -387,4 +387,21 @@ class TripAnalyzerTest {
     assertEquals("auto", session.trigger)
     assertEquals("auto", parseTripTrigger(session.trigger))
   }
+
+  @Test
+  fun recordsOneGentleAccelThenWaits() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig.DEFAULT,
+      "smooth",
+      0.0,
+      DeviceInfo("android", "test"),
+    )
+    for (step in 0..6) {
+      analyzer.pushLocation(loc(step * 1000.0, 10.0 + step))
+    }
+    val session = analyzer.finalize(7000.0)
+    assertEquals(1, session.events.count { it.type == EVENT_SMOOTH_ACCEL })
+    assertTrue(session.metrics.score > 100.0)
+    assertTrue(session.metrics.score <= SCORE_MAX)
+  }
 }

@@ -1,5 +1,14 @@
 import { tagCompoundOverlaps } from "./compound.js";
-import { mergeDetectorConfig, SCORE_PENALTY_X } from "./config.js";
+import {
+  mergeDetectorConfig,
+  SCORE_MAX,
+  SCORE_PENALTY_X,
+  SMOOTH_CEILING_X,
+  SMOOTH_FLOOR_MPS2,
+  SMOOTH_GAP_M,
+  SMOOTH_HOLD_MIN_M,
+  SMOOTH_HOLD_MS,
+} from "./config.js";
 import {
   isSuspiciousSpeedLeap,
   lastLocationAnchor,
@@ -64,6 +73,22 @@ export type TripAnalyzerOptions = {
   trigger?: TripTrigger;
 };
 
+const SMOOTH_TYPES = ["smooth_accel", "smooth_brake", "smooth_corner"] as const;
+
+export type SmoothDrivingEventType = (typeof SMOOTH_TYPES)[number];
+
+type SmoothHold = {
+  sinceT: number;
+  sinceDistanceM: number;
+  peak: number;
+};
+
+export function isSmoothDrivingEvent(
+  type: DrivingEventType,
+): type is SmoothDrivingEventType {
+  return (SMOOTH_TYPES as readonly DrivingEventType[]).includes(type);
+}
+
 type AnalyzerState = {
   config: DetectorConfig;
   sessionId: string;
@@ -77,6 +102,9 @@ type AnalyzerState = {
   heldSpeedLeap: LocationSample | null;
   lastEventAt: Partial<Record<DrivingEventType, number>>;
   lastEventLevel: Partial<Record<DrivingEventType, HarshEventLevel>>;
+  smoothHold: Partial<Record<SmoothDrivingEventType, SmoothHold>>;
+  /** Trip distance when this type last earned a credit. */
+  smoothCreditAtM: Partial<Record<SmoothDrivingEventType, number>>;
   openSpeeding: DrivingEvent | null;
   openHandheld: DrivingEvent | null;
   handheld: HandheldFilter;
@@ -105,6 +133,9 @@ function emptyCounts(): Record<DrivingEventType, number> {
     jerk: 0,
     possible_impact: 0,
     phone_handheld: 0,
+    smooth_accel: 0,
+    smooth_brake: 0,
+    smooth_corner: 0,
   };
 }
 
@@ -346,6 +377,7 @@ function updateSpeedingSpan(
 function detectFromMotion(
   state: AnalyzerState,
   t: number,
+  includeSmooth = false,
 ): DrivingEvent[] {
   const emitted: DrivingEvent[] = [];
   const speed = currentSpeed(state);
@@ -450,6 +482,101 @@ function detectFromMotion(
     }
   }
 
+  if (includeSmooth) {
+    emitted.push(...updateSmoothCredits(state, t, moving, location, speed));
+  }
+
+  return emitted;
+}
+
+function smoothMagnitude(
+  type: SmoothDrivingEventType,
+  longitudinal: number | null,
+  lateral: number | null,
+  config: DetectorConfig,
+): number | null {
+  let magnitude: number | null = null;
+  let harsh = 0;
+  if (type === "smooth_accel") {
+    if (longitudinal == null || longitudinal <= 0) {
+      return null;
+    }
+    magnitude = longitudinal;
+    harsh = config.harshAccelMps2;
+  } else if (type === "smooth_brake") {
+    if (longitudinal == null || longitudinal >= 0) {
+      return null;
+    }
+    magnitude = -longitudinal;
+    harsh = config.harshBrakeMps2;
+  } else {
+    if (lateral == null) {
+      return null;
+    }
+    magnitude = Math.abs(lateral);
+    harsh = config.harshCornerMps2;
+  }
+  const ceiling = harsh * SMOOTH_CEILING_X;
+  if (ceiling < SMOOTH_FLOOR_MPS2 || magnitude < SMOOTH_FLOOR_MPS2 || magnitude > ceiling) {
+    return null;
+  }
+  return magnitude;
+}
+
+function updateSmoothCredits(
+  state: AnalyzerState,
+  t: number,
+  moving: boolean,
+  location: LocationSample | null,
+  speed: number | null,
+): DrivingEvent[] {
+  const emitted: DrivingEvent[] = [];
+  for (const type of SMOOTH_TYPES) {
+    const magnitude = moving
+      ? smoothMagnitude(
+          type,
+          state.longitudinalAccelMps2,
+          state.lateralAccelMps2,
+          state.config,
+        )
+      : null;
+    if (magnitude == null) {
+      delete state.smoothHold[type];
+      continue;
+    }
+    const hold = state.smoothHold[type];
+    if (!hold) {
+      state.smoothHold[type] = { sinceT: t, sinceDistanceM: state.distanceM, peak: magnitude };
+      continue;
+    }
+    hold.peak = Math.max(hold.peak, magnitude);
+    const heldMs = t - hold.sinceT;
+    const movedM = state.distanceM - hold.sinceDistanceM;
+    if (heldMs < SMOOTH_HOLD_MS || movedM < SMOOTH_HOLD_MIN_M) {
+      continue;
+    }
+    const lastCreditM = state.smoothCreditAtM[type];
+    if (lastCreditM != null && state.distanceM - lastCreditM < SMOOTH_GAP_M) {
+      continue;
+    }
+    const event: DrivingEvent = {
+      id: `${type}-${t}`,
+      type,
+      t,
+      endT: null,
+      peak: hold.peak,
+      severity: 0,
+      level: "light",
+      lat: location?.lat ?? null,
+      lon: location?.lon ?? null,
+      speedMps: speed,
+      overlaps: [],
+    };
+    state.events.push(event);
+    state.smoothCreditAtM[type] = state.distanceM;
+    delete state.smoothHold[type];
+    emitted.push(event);
+  }
   return emitted;
 }
 
@@ -510,6 +637,12 @@ function eventWeight(type: DrivingEventType, config: DetectorConfig): number {
       return 0;
     case "phone_handheld":
       return 0;
+    case "smooth_accel":
+      return config.score.smoothAccel;
+    case "smooth_brake":
+      return config.score.smoothBrake;
+    case "smooth_corner":
+      return config.score.smoothCorner;
   }
 }
 
@@ -675,30 +808,35 @@ export function scoreEvents(
   config: DetectorConfig,
   exposure: { distanceM: number; durationMs: number },
 ): number {
-  let penalty = 0;
+  let delta = 0;
   for (const event of events) {
-    penalty += eventWeight(event.type, config) * (0.4 + 0.6 * event.severity);
-    if (event.overlaps.length > 0) {
-      penalty += config.score.compound;
-    }
+    delta += eventScorePoints(event, config, exposure.distanceM);
   }
-  const scale = scoreExposureScale(exposure.distanceM, exposure.durationMs, config);
-  return clamp(config.score.start - penalty * scale * SCORE_PENALTY_X, 0, 100);
+  return clamp(config.score.start + delta, 0, SCORE_MAX);
 }
 
-/** Points this event subtracts at the trip's current distance. Impact and phone use are 0. */
+/**
+ * Signed points at the trip's current distance.
+ * Harsh events are negative. A completed gentle maneuver is positive.
+ * Impact and phone use are 0.
+ */
 export function eventScorePoints(
   event: Pick<DrivingEvent, "type" | "severity" | "overlaps">,
   config: DetectorConfig,
   distanceM: number,
 ): number {
+  const scale = scoreExposureScale(distanceM, 0, config);
+  const weight = eventWeight(event.type, config);
+  if (isSmoothDrivingEvent(event.type)) {
+    return weight * scale * SCORE_PENALTY_X;
+  }
   const severity = Number.isFinite(event.severity) ? Math.min(1, Math.max(0, event.severity)) : 0;
-  let raw = eventWeight(event.type, config) * (0.4 + 0.6 * severity);
+  let raw = weight * (0.4 + 0.6 * severity);
   if (event.overlaps.length > 0) {
     raw += config.score.compound;
   }
-  const scale = scoreExposureScale(distanceM, 0, config);
-  return raw * scale * SCORE_PENALTY_X;
+  const points = -(raw * scale * SCORE_PENALTY_X);
+  return points === 0 ? 0 : points;
 }
 
 export function eventCounts(
@@ -766,6 +904,8 @@ export function createTripAnalyzer(
     events: [],
     lastEventAt: {},
     lastEventLevel: {},
+    smoothHold: {},
+    smoothCreditAtM: {},
     openSpeeding: null,
     openHandheld: null,
     handheld: emptyHandheldFilter(),
@@ -821,7 +961,7 @@ export function createTripAnalyzer(
     state.longitudinalAccelMps2 = accel.longitudinal;
     state.lateralAccelMps2 = accel.lateral;
     state.yawRateRadps = accel.yawRateRadps;
-    const motion = detectFromMotion(state, withRoad.t);
+    const motion = detectFromMotion(state, withRoad.t, true);
     const impact = resolvePendingImpact(state, withRoad.t, false);
     const newEvents = impact ? [...motion, impact] : motion;
     return { metrics: buildMetrics(state, withRoad.t), newEvents };

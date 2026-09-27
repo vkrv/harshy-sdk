@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_DETECTOR_CONFIG, SCORE_PENALTY_X } from "./config.js";
+import { DEFAULT_DETECTOR_CONFIG, SCORE_MAX, SCORE_PENALTY_X } from "./config.js";
 import { analyzeTrip, createTripAnalyzer, eventScorePoints, scoreEvents } from "./detector.js";
 import { generateSampleTrip } from "./simulate.js";
 import type { DrivingEvent, ImuSample, LocationSample } from "./types.js";
@@ -117,6 +117,9 @@ describe("detector", () => {
     expect(types.has("harsh_accel")).toBe(true);
     expect(types.has("harsh_corner")).toBe(true);
     expect(types.has("swerve")).toBe(true);
+    expect(types.has("smooth_accel")).toBe(true);
+    expect(types.has("smooth_brake")).toBe(true);
+    expect(types.has("smooth_corner")).toBe(true);
     expect(types.has("possible_impact")).toBe(false);
     expect(session.events.every((event) => ["light", "medium", "heavy"].includes(event.level))).toBe(
       true,
@@ -124,6 +127,26 @@ describe("detector", () => {
     expect(session.metrics.score).toBeLessThan(100);
     expect(session.metrics.distanceM).toBeGreaterThan(100);
     expect(session.metrics.durationMs).toBeGreaterThan(50_000);
+
+    const sensitive = analyzeTrip({
+      location: trip.location,
+      imu: trip.imu,
+      sessionId: trip.sessionId,
+      startedAtMs: trip.startedAtMs,
+      endedAtMs: trip.endedAtMs,
+      device: { platform: "web", model: "sim" },
+      config: {
+        harshAccelMps2: 2,
+        harshBrakeMps2: 2.5,
+        harshCornerMps2: 2.5,
+        minSpeedMps: 1.5,
+        harshSwerveRadps: 0.35,
+      },
+    });
+    const sensitiveTypes = new Set(sensitive.events.map((event) => event.type));
+    expect(sensitiveTypes.has("smooth_accel")).toBe(true);
+    expect(sensitiveTypes.has("smooth_brake")).toBe(true);
+    expect(sensitiveTypes.has("smooth_corner")).toBe(true);
   });
 
   it("re-scores a recorded trip when thresholds change", () => {
@@ -327,7 +350,7 @@ describe("detector", () => {
 
   it("reports each event's points at the trip distance", () => {
     expect(eventScorePoints(brake, DEFAULT_DETECTOR_CONFIG, 5_000)).toBeCloseTo(
-      DEFAULT_DETECTOR_CONFIG.score.harshBrake * SCORE_PENALTY_X,
+      -DEFAULT_DETECTOR_CONFIG.score.harshBrake * SCORE_PENALTY_X,
     );
     expect(
       eventScorePoints({ ...brake, type: "possible_impact", overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
@@ -335,9 +358,12 @@ describe("detector", () => {
     expect(
       eventScorePoints({ ...brake, overlaps: ["harsh_corner"] }, DEFAULT_DETECTOR_CONFIG, 5_000),
     ).toBeCloseTo(
-      (DEFAULT_DETECTOR_CONFIG.score.harshBrake + DEFAULT_DETECTOR_CONFIG.score.compound) *
+      -(DEFAULT_DETECTOR_CONFIG.score.harshBrake + DEFAULT_DETECTOR_CONFIG.score.compound) *
         SCORE_PENALTY_X,
     );
+    expect(
+      eventScorePoints({ ...brake, type: "smooth_accel", overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
+    ).toBeCloseTo(DEFAULT_DETECTOR_CONFIG.score.smoothAccel * SCORE_PENALTY_X);
   });
 
   it("gives a perfect score when there are no events, regardless of trip length", () => {
@@ -362,6 +388,58 @@ describe("detector", () => {
     expect(short).toBeLessThan(100);
     expect(long).toBeGreaterThan(short);
     expect(long).toBeLessThanOrEqual(100);
+  });
+
+  it("adds a flat smooth credit and will not climb past the cap", () => {
+    const smooth: DrivingEvent = { ...brake, type: "smooth_accel", severity: 0, overlaps: [] };
+    const one = scoreEvents([smooth], DEFAULT_DETECTOR_CONFIG, {
+      distanceM: 5_000,
+      durationMs: 10 * 60_000,
+    });
+    expect(one).toBeCloseTo(100 + DEFAULT_DETECTOR_CONFIG.score.smoothAccel * SCORE_PENALTY_X);
+    expect(one).toBeGreaterThan(100);
+    const pile = scoreEvents(
+      Array.from({ length: 40 }, () => smooth),
+      DEFAULT_DETECTOR_CONFIG,
+      { distanceM: 5_000, durationMs: 10 * 60_000 },
+    );
+    expect(pile).toBe(SCORE_MAX);
+  });
+
+  it("records one gentle accel after it holds, then waits for more distance", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "smooth-accel",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    for (let step = 0; step <= 6; step += 1) {
+      analyzer.pushLocation(loc(step * 1000, 10 + step));
+    }
+    const credits = analyzer.getEvents().filter((event) => event.type === "smooth_accel");
+    expect(credits).toHaveLength(1);
+    expect(credits[0]?.peak).toBeGreaterThanOrEqual(0.5);
+    expect(credits[0]?.peak).toBeLessThanOrEqual(2.5 * 0.6);
+    for (let step = 7; step <= 12; step += 1) {
+      analyzer.pushLocation(loc(step * 1000, 10 + step));
+    }
+    expect(analyzer.getEvents().filter((event) => event.type === "smooth_accel")).toHaveLength(1);
+    expect(analyzer.getMetrics().score).toBeGreaterThan(100);
+  });
+
+  it("drops a gentle-accel hold when the pull gets harsh", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "smooth-reset",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    analyzer.pushLocation(loc(0, 10));
+    analyzer.pushLocation(loc(1000, 11));
+    analyzer.pushLocation(loc(2000, 12));
+    analyzer.pushLocation(loc(3000, 20));
+    analyzer.pushLocation(loc(4000, 21));
+    analyzer.pushLocation(loc(5000, 22));
+    analyzer.pushLocation(loc(6000, 23));
+    expect(analyzer.getEvents().some((event) => event.type === "smooth_accel")).toBe(false);
   });
 
   it("ignores duration when scaling penalties", () => {

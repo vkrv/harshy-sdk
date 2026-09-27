@@ -1,7 +1,17 @@
 package com.harshy.sdk
 
-/** Event penalties apply at 1/2. */
+/** Event penalties and smooth credits apply at 1/2. */
 const val SCORE_PENALTY_X = 1.0 / 2.0
+
+/** A smooth trip can rise above 100, and stops here. */
+const val SCORE_MAX = 120.0
+
+const val SMOOTH_FLOOR_MPS2 = 0.5
+const val SMOOTH_CEILING_X = 0.6
+const val SMOOTH_HOLD_MS = 3000.0
+const val SMOOTH_HOLD_MIN_M = 15.0
+const val SMOOTH_GAP_M = 400.0
+const val SMOOTH_CREDIT_WEIGHT = 1.6
 
 data class DetectorScoreWeights(
   val start: Double = 100.0,
@@ -16,6 +26,9 @@ data class DetectorScoreWeights(
   val refDurationMin: Double = 10.0,
   val minDistanceKm: Double = 2.0,
   val minDurationMin: Double = 5.0,
+  val smoothAccel: Double = SMOOTH_CREDIT_WEIGHT,
+  val smoothBrake: Double = SMOOTH_CREDIT_WEIGHT,
+  val smoothCorner: Double = SMOOTH_CREDIT_WEIGHT,
 )
 
 data class DetectorConfig(

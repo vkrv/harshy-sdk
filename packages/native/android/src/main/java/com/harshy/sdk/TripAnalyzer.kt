@@ -38,6 +38,8 @@ class TripAnalyzer(
   private var speedSum = 0.0
   private var speedCount = 0
   private var heldSpeedLeap: LocationSample? = null
+  private val smoothHold = mutableMapOf<String, SmoothHold>()
+  private val smoothCreditAtM = mutableMapOf<String, Double>()
 
   fun setConfig(next: DetectorConfig) {
     config = mergeDetectorConfig(next)
@@ -107,7 +109,7 @@ class TripAnalyzer(
     longitudinalAccelMps2 = accel.longitudinal
     lateralAccelMps2 = accel.lateral
     yawRateRadps = accel.yawRateRadps
-    val motion = detectFromMotion(stored.t)
+    val motion = detectFromMotion(stored.t, includeSmooth = true)
     val impact = resolvePendingImpact(stored.t, force = false)
     val newEvents = if (impact != null) motion + impact else motion
     return AnalyzerPush(metrics = buildMetrics(stored.t), newEvents = newEvents)
@@ -353,7 +355,7 @@ class TripAnalyzer(
     return null
   }
 
-  private fun detectFromMotion(t: Double): List<DrivingEvent> {
+  private fun detectFromMotion(t: Double, includeSmooth: Boolean = false): List<DrivingEvent> {
     val emitted = mutableListOf<DrivingEvent>()
     val speed = currentSpeed()
     val moving = speed != null && speed >= config.minSpeedMps
@@ -407,6 +409,86 @@ class TripAnalyzer(
       maybeEmit(EVENT_JERK, t, imuMag, config.harshBrakeMps2, loc, speed)?.let { emitted.add(it) }
     }
 
+    if (includeSmooth) {
+      emitted.addAll(updateSmoothCredits(t, moving, loc, speed))
+    }
+
+    return emitted
+  }
+
+  private data class SmoothHold(var sinceT: Double, var sinceDistanceM: Double, var peak: Double)
+
+  private fun smoothMagnitude(type: String, longitudinal: Double?, lateral: Double?): Double? {
+    val magnitude: Double
+    val harsh: Double
+    when (type) {
+      EVENT_SMOOTH_ACCEL -> {
+        if (longitudinal == null || longitudinal <= 0.0) return null
+        magnitude = longitudinal
+        harsh = config.harshAccelMps2
+      }
+      EVENT_SMOOTH_BRAKE -> {
+        if (longitudinal == null || longitudinal >= 0.0) return null
+        magnitude = -longitudinal
+        harsh = config.harshBrakeMps2
+      }
+      else -> {
+        if (lateral == null) return null
+        magnitude = abs(lateral)
+        harsh = config.harshCornerMps2
+      }
+    }
+    val ceiling = harsh * SMOOTH_CEILING_X
+    if (ceiling < SMOOTH_FLOOR_MPS2 || magnitude < SMOOTH_FLOOR_MPS2 || magnitude > ceiling) {
+      return null
+    }
+    return magnitude
+  }
+
+  private fun updateSmoothCredits(
+    t: Double,
+    moving: Boolean,
+    loc: LocationSample?,
+    speed: Double?,
+  ): List<DrivingEvent> {
+    val emitted = mutableListOf<DrivingEvent>()
+    for (type in listOf(EVENT_SMOOTH_ACCEL, EVENT_SMOOTH_BRAKE, EVENT_SMOOTH_CORNER)) {
+      val magnitude = if (moving) smoothMagnitude(type, longitudinalAccelMps2, lateralAccelMps2) else null
+      if (magnitude == null) {
+        smoothHold.remove(type)
+        continue
+      }
+      val hold = smoothHold[type]
+      if (hold == null) {
+        smoothHold[type] = SmoothHold(t, distanceM, magnitude)
+        continue
+      }
+      hold.peak = max(hold.peak, magnitude)
+      val heldMs = t - hold.sinceT
+      val movedM = distanceM - hold.sinceDistanceM
+      if (heldMs < SMOOTH_HOLD_MS || movedM < SMOOTH_HOLD_MIN_M) {
+        continue
+      }
+      val lastCreditM = smoothCreditAtM[type]
+      if (lastCreditM != null && distanceM - lastCreditM < SMOOTH_GAP_M) {
+        continue
+      }
+      val event = DrivingEvent(
+        id = "$type-$t",
+        type = type,
+        t = t,
+        peak = hold.peak,
+        severity = 0.0,
+        level = "light",
+        lat = loc?.lat,
+        lon = loc?.lon,
+        speedMps = speed,
+      )
+      events.add(event)
+      smoothCreditAtM[type] = distanceM
+      smoothHold.remove(type)
+      emitted.add(event)
+    }
     return emitted
   }
 
@@ -598,21 +680,37 @@ fun scoreExposureScale(distanceM: Double, durationMs: Double, config: DetectorCo
   return clamp(1 / max(exposure, 1e-6), 0.2, 4.0)
 }
 
+fun eventScorePoints(event: DrivingEvent, config: DetectorConfig, distanceM: Double): Double {
+  val scale = scoreExposureScale(distanceM, 0.0, config)
+  val weight = eventWeight(event.type, config)
+  if (
+    event.type == EVENT_SMOOTH_ACCEL ||
+    event.type == EVENT_SMOOTH_BRAKE ||
+    event.type == EVENT_SMOOTH_CORNER
+  ) {
+    return weight * scale * SCORE_PENALTY_X
+  }
+  val severity = event.severity.coerceIn(0.0, 1.0)
+  var raw = weight * (0.4 + 0.6 * severity)
+  if (event.overlaps.isNotEmpty()) {
+    raw += config.score.compound
+  }
+  val points = -(raw * scale * SCORE_PENALTY_X)
+  return if (points == 0.0) 0.0 else points
+}
+
+@Suppress("UNUSED_PARAMETER")
 fun scoreEvents(
   events: List<DrivingEvent>,
   config: DetectorConfig,
   distanceM: Double,
   durationMs: Double,
 ): Double {
-  var penalty = 0.0
+  var delta = 0.0
   for (event in events) {
-    penalty += eventWeight(event.type, config) * (0.4 + 0.6 * event.severity)
-    if (event.overlaps.isNotEmpty()) {
-      penalty += config.score.compound
-    }
+    delta += eventScorePoints(event, config, distanceM)
   }
-  val scale = scoreExposureScale(distanceM, durationMs, config)
-  return clamp(config.score.start - penalty * scale * SCORE_PENALTY_X, 0.0, 100.0)
+  return clamp(config.score.start + delta, 0.0, SCORE_MAX)
 }
 
 fun eventCounts(events: List<DrivingEvent>): Map<String, Int> {
@@ -665,6 +763,9 @@ private fun eventWeight(type: String, config: DetectorConfig): Double {
     EVENT_JERK -> config.score.jerk
     POSSIBLE_IMPACT_TYPE -> 0.0
     PHONE_HANDHELD_TYPE -> 0.0
+    EVENT_SMOOTH_ACCEL -> config.score.smoothAccel
+    EVENT_SMOOTH_BRAKE -> config.score.smoothBrake
+    EVENT_SMOOTH_CORNER -> config.score.smoothCorner
     else -> 0.0
   }
 }

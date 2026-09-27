@@ -1,6 +1,13 @@
 import Foundation
 
 public let harshyScorePenaltyX = 1.0 / 2.0
+public let harshyScoreMax = 120.0
+public let harshySmoothFloorMps2 = 0.5
+public let harshySmoothCeilingX = 0.6
+public let harshySmoothHoldMs = 3000.0
+public let harshySmoothHoldMinM = 15.0
+public let harshySmoothGapM = 400.0
+public let harshySmoothCreditWeight = 1.6
 
 public struct HarshyDetectorScoreWeights: Equatable, Sendable {
   public var start: Double
@@ -15,6 +22,9 @@ public struct HarshyDetectorScoreWeights: Equatable, Sendable {
   public var refDurationMin: Double
   public var minDistanceKm: Double
   public var minDurationMin: Double
+  public var smoothAccel: Double
+  public var smoothBrake: Double
+  public var smoothCorner: Double
 
   public init(
     start: Double = 100,
@@ -28,7 +38,10 @@ public struct HarshyDetectorScoreWeights: Equatable, Sendable {
     refDistanceKm: Double = 5,
     refDurationMin: Double = 10,
     minDistanceKm: Double = 2,
-    minDurationMin: Double = 5
+    minDurationMin: Double = 5,
+    smoothAccel: Double = harshySmoothCreditWeight,
+    smoothBrake: Double = harshySmoothCreditWeight,
+    smoothCorner: Double = harshySmoothCreditWeight
   ) {
     self.start = start
     self.harshAccel = harshAccel
@@ -42,6 +55,9 @@ public struct HarshyDetectorScoreWeights: Equatable, Sendable {
     self.refDurationMin = refDurationMin
     self.minDistanceKm = minDistanceKm
     self.minDurationMin = minDurationMin
+    self.smoothAccel = smoothAccel
+    self.smoothBrake = smoothBrake
+    self.smoothCorner = smoothCorner
   }
 }
 

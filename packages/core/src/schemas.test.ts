@@ -100,6 +100,9 @@ describe("session contract", () => {
     const {
       possible_impact: _impact,
       phone_handheld: _handheld,
+      smooth_accel: _smoothAccel,
+      smooth_brake: _smoothBrake,
+      smooth_corner: _smoothCorner,
       ...legacyCounts
     } = session.metrics.eventCounts;
     const parsed = parseSessionExport({
@@ -108,6 +111,9 @@ describe("session contract", () => {
     });
     expect(parsed.metrics.eventCounts.possible_impact).toBe(0);
     expect(parsed.metrics.eventCounts.phone_handheld).toBe(0);
+    expect(parsed.metrics.eventCounts.smooth_accel).toBe(0);
+    expect(parsed.metrics.eventCounts.smooth_brake).toBe(0);
+    expect(parsed.metrics.eventCounts.smooth_corner).toBe(0);
   });
 
   it("fills trigger=manual on older JSON and keeps schemaVersion 1", () => {

@@ -82,6 +82,9 @@ extension HarshyDetectorConfig {
         "refDurationMin": score.refDurationMin,
         "minDistanceKm": score.minDistanceKm,
         "minDurationMin": score.minDurationMin,
+        "smoothAccel": score.smoothAccel,
+        "smoothBrake": score.smoothBrake,
+        "smoothCorner": score.smoothCorner,
       ],
     ]
   }

@@ -133,6 +133,9 @@ internal const val EVENT_HARSH_CORNER = "harsh_corner"
 internal const val EVENT_SWERVE = "swerve"
 internal const val EVENT_SPEEDING = "speeding"
 internal const val EVENT_JERK = "jerk"
+internal const val EVENT_SMOOTH_ACCEL = "smooth_accel"
+internal const val EVENT_SMOOTH_BRAKE = "smooth_brake"
+internal const val EVENT_SMOOTH_CORNER = "smooth_corner"
 
 internal fun emptyEventCounts(): MutableMap<String, Int> {
   return mutableMapOf(
@@ -144,5 +147,8 @@ internal fun emptyEventCounts(): MutableMap<String, Int> {
     EVENT_JERK to 0,
     POSSIBLE_IMPACT_TYPE to 0,
     PHONE_HANDHELD_TYPE to 0,
+    EVENT_SMOOTH_ACCEL to 0,
+    EVENT_SMOOTH_BRAKE to 0,
+    EVENT_SMOOTH_CORNER to 0,
   )
 }

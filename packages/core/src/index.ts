@@ -8,7 +8,14 @@ export {
 export {
   DEFAULT_DETECTOR_CONFIG,
   DEFAULT_NATIVE_START_OPTIONS,
+  SCORE_MAX,
   SCORE_PENALTY_X,
+  SMOOTH_CEILING_X,
+  SMOOTH_CREDIT_WEIGHT,
+  SMOOTH_FLOOR_MPS2,
+  SMOOTH_GAP_M,
+  SMOOTH_HOLD_MIN_M,
+  SMOOTH_HOLD_MS,
   mergeDetectorConfig,
   mergeNativeStartOptions,
 } from "./config.js";
@@ -18,6 +25,7 @@ export {
   eventCounts,
   scoreEvents,
   eventScorePoints,
+  isSmoothDrivingEvent,
   scoreExposureScale,
   summarizeTrip,
   type TripAnalyzer,

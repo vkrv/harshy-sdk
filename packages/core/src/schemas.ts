@@ -48,6 +48,9 @@ export const drivingEventTypeSchema = z.enum([
   "jerk",
   "possible_impact",
   "phone_handheld",
+  "smooth_accel",
+  "smooth_brake",
+  "smooth_corner",
 ]);
 
 export const impactDirectionSchema = z.enum(["front", "rear", "rollover", "unknown"]);
@@ -131,6 +134,9 @@ export const detectorConfigSchema = z.object({
       speeding: z.number(),
       jerk: z.number(),
       compound: z.number().default(DEFAULT_DETECTOR_CONFIG.score.compound),
+      smoothAccel: z.number().nonnegative().default(DEFAULT_DETECTOR_CONFIG.score.smoothAccel),
+      smoothBrake: z.number().nonnegative().default(DEFAULT_DETECTOR_CONFIG.score.smoothBrake),
+      smoothCorner: z.number().nonnegative().default(DEFAULT_DETECTOR_CONFIG.score.smoothCorner),
       refDistanceKm: z.number().positive().default(DEFAULT_DETECTOR_CONFIG.score.refDistanceKm),
       refDurationMin: z.number().positive().default(DEFAULT_DETECTOR_CONFIG.score.refDurationMin),
       minDistanceKm: z.number().positive().default(DEFAULT_DETECTOR_CONFIG.score.minDistanceKm),
@@ -164,6 +170,9 @@ export const sessionExportSchema = z.object({
       jerk: z.number().int().nonnegative(),
       possible_impact: z.number().int().nonnegative().default(0),
       phone_handheld: z.number().int().nonnegative().default(0),
+      smooth_accel: z.number().int().nonnegative().default(0),
+      smooth_brake: z.number().int().nonnegative().default(0),
+      smooth_corner: z.number().int().nonnegative().default(0),
     }),
   }),
   device: z.object({

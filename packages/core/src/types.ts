@@ -42,7 +42,10 @@ export type DrivingEventType =
   | "speeding"
   | "jerk"
   | "possible_impact"
-  | "phone_handheld";
+  | "phone_handheld"
+  | "smooth_accel"
+  | "smooth_brake"
+  | "smooth_corner";
 
 /** Honest v1 impact axis. Not left/right or a body panel. */
 export type ImpactDirection = "front" | "rear" | "rollover" | "unknown";
@@ -104,6 +107,12 @@ export type DetectorScoreWeights = {
   jerk: number;
   /** Extra penalty when a kinematic event overlaps another type. */
   compound: number;
+  /** Flat credit for a completed gentle accel. Not scaled by severity. */
+  smoothAccel: number;
+  /** Flat credit for a completed gentle brake. */
+  smoothBrake: number;
+  /** Flat credit for a completed gentle corner. */
+  smoothCorner: number;
   /** Distance at which event penalties are applied 1:1. Duration does not scale the score. */
   refDistanceKm: number;
   /** Kept so older session JSON still parses. Not used in the score. */

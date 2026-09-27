@@ -253,6 +253,9 @@ let harshyEventHarshCorner = "harsh_corner"
 let harshyEventSwerve = "swerve"
 let harshyEventSpeeding = "speeding"
 let harshyEventJerk = "jerk"
+let harshyEventSmoothAccel = "smooth_accel"
+let harshyEventSmoothBrake = "smooth_brake"
+let harshyEventSmoothCorner = "smooth_corner"
 
 func harshyEmptyEventCounts() -> [String: Int] {
   [
@@ -264,6 +267,9 @@ func harshyEmptyEventCounts() -> [String: Int] {
     harshyEventJerk: 0,
     harshyPossibleImpactType: 0,
     harshyPhoneHandheldType: 0,
+    harshyEventSmoothAccel: 0,
+    harshyEventSmoothBrake: 0,
+    harshyEventSmoothCorner: 0,
   ]
 }
 

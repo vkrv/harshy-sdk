@@ -51,42 +51,50 @@ function roadBumpMps2(elapsedSec: number): number {
   return 0.05;
 }
 
-/** Piecewise motion. Speeds must be continuous at segment joins so IMU Δv is not crash-like. */
+/**
+ * Piecewise motion. Speeds are continuous at segment joins so IMU Δv is not crash-like.
+ * Each gentle stretch is 0.6 m/s² for 6 s, inside the smooth band for Standard (ceiling
+ * 1.5) and Sensitive (ceiling 1.2), and still inside a 1.2 m/s² retune (ceiling 0.72).
+ * Hard stretches stay above the Standard harsh bars.
+ */
 function motionAt(elapsedSec: number): { speed: number; heading: number } {
-  if (elapsedSec <= 8) {
-    return { speed: lerp(0, 14, elapsedSec / 8), heading: 0 };
+  if (elapsedSec <= 6) {
+    return { speed: lerp(6, 9.6, elapsedSec / 6), heading: 0 };
   }
-  if (elapsedSec <= 20) {
-    return { speed: 14, heading: 0 };
+  if (elapsedSec <= 16) {
+    return { speed: 9.6, heading: 0 };
   }
   if (elapsedSec <= 22) {
-    return { speed: lerp(14, 6, (elapsedSec - 20) / 2), heading: 0 };
-  }
-  if (elapsedSec <= 23) {
-    return { speed: 6, heading: 0 };
+    return { speed: 9.6, heading: lerp(0, 21, (elapsedSec - 16) / 6) };
   }
   if (elapsedSec <= 24) {
-    return { speed: 6, heading: lerp(0, 26, elapsedSec - 23) };
+    return { speed: lerp(9.6, 3.2, (elapsedSec - 22) / 2), heading: 21 };
   }
-  if (elapsedSec <= 25) {
-    return { speed: 6, heading: lerp(26, 0, elapsedSec - 24) };
+  if (elapsedSec <= 26) {
+    return { speed: 3.2, heading: 21 };
+  }
+  if (elapsedSec <= 27) {
+    return { speed: 3.2, heading: lerp(21, 47, elapsedSec - 26) };
+  }
+  if (elapsedSec <= 28) {
+    return { speed: 3.2, heading: 47 };
   }
   if (elapsedSec <= 30) {
-    return { speed: 6, heading: 0 };
+    return { speed: lerp(3.2, 9.2, (elapsedSec - 28) / 2), heading: 47 };
   }
-  if (elapsedSec <= 32) {
-    return { speed: lerp(6, 15, (elapsedSec - 30) / 2), heading: 0 };
+  if (elapsedSec <= 36) {
+    return { speed: lerp(9.2, 5.6, (elapsedSec - 30) / 6), heading: 47 };
   }
-  if (elapsedSec <= 35) {
-    return { speed: lerp(15, 12, (elapsedSec - 32) / 3), heading: lerp(0, 80, (elapsedSec - 32) / 3) };
+  if (elapsedSec <= 46) {
+    return { speed: 5.6, heading: 47 };
   }
-  if (elapsedSec <= 50) {
-    return { speed: 12, heading: 80 };
+  if (elapsedSec <= 49) {
+    return { speed: 5.6, heading: lerp(47, 157, (elapsedSec - 46) / 3) };
   }
-  if (elapsedSec <= 53) {
-    return { speed: lerp(12, 0, (elapsedSec - 50) / 3), heading: 80 };
+  if (elapsedSec <= 50.5) {
+    return { speed: lerp(5.6, 0, (elapsedSec - 49) / 1.5), heading: 157 };
   }
-  return { speed: 0, heading: 80 };
+  return { speed: 0, heading: 157 };
 }
 
 export function generateSampleTrip(options?: {

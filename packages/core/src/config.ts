@@ -27,8 +27,32 @@ import {
 } from "./impact.js";
 import type { DetectorConfig, NativeStartOptions } from "./types.js";
 
-/** Event penalties apply at 1/2. */
+/** Event penalties and smooth credits apply at 1/2. */
 export const SCORE_PENALTY_X = 1 / 2;
+
+/** A smooth trip can rise above 100, and stops here. */
+export const SCORE_MAX = 120;
+
+/** Gentle accel, brake, or corner must be at least this strong (m/s²). */
+export const SMOOTH_FLOOR_MPS2 = 0.5;
+
+/** And no more than this fraction of that axis's harsh threshold. */
+export const SMOOTH_CEILING_X = 0.6;
+
+/** The maneuver has to stay in that band this long. */
+export const SMOOTH_HOLD_MS = 3000;
+
+/** And the car has to actually move during the hold. */
+export const SMOOTH_HOLD_MIN_M = 15;
+
+/** Same type waits until the trip covers this much more distance. */
+export const SMOOTH_GAP_M = 400;
+
+/**
+ * Flat credit before the ½ factor. At the 5 km reference that is +0.8.
+ * The severity curve does not apply.
+ */
+export const SMOOTH_CREDIT_WEIGHT = 1.6;
 
 export const DEFAULT_DETECTOR_CONFIG: DetectorConfig = {
   harshAccelMps2: 2.5,
@@ -78,6 +102,9 @@ export const DEFAULT_DETECTOR_CONFIG: DetectorConfig = {
     speeding: 4,
     jerk: 3,
     compound: 3,
+    smoothAccel: SMOOTH_CREDIT_WEIGHT,
+    smoothBrake: SMOOTH_CREDIT_WEIGHT,
+    smoothCorner: SMOOTH_CREDIT_WEIGHT,
     refDistanceKm: 5,
     refDurationMin: 10,
     minDistanceKm: 2,

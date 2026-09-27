@@ -29,7 +29,13 @@ import {
   severityFromPeak,
   verticalGyroRadps,
 } from "./geo.js";
-import { harshEventLevel, harshLevelRank, liveHarshLevels } from "./harsh.js";
+import {
+  harshEventLevel,
+  harshLevelRank,
+  isSwerveMotion,
+  liveHarshLevels,
+  yawRateJerkRadps2,
+} from "./harsh.js";
 import { advanceHeadingFilter, emptyHeadingFilter, type HeadingFilter } from "./heading.js";
 import {
   advanceHandheld,
@@ -124,6 +130,15 @@ type AnalyzerState = {
   longitudinalAccelMps2: number | null;
   lateralAccelMps2: number | null;
   yawRateRadps: number | null;
+  /** Prior GPS-window yaw for swerve onset (jerk). */
+  prevYawRateRadps: number | null;
+  prevYawAtT: number | null;
+  yawJerkRadps2: number | null;
+  /** Brief elevated-yaw episode awaiting a drop (lane flick vs sustained turn). */
+  swerveElevatedSinceT: number | null;
+  swerveElevatedPeak: number;
+  swerveElevatedRiseJerk: number;
+  swerveElevatedAtSpeed: number | null;
   maxSpeedMps: number | null;
   speedSum: number;
   speedCount: number;
@@ -290,15 +305,18 @@ function gpsWindowAccel(state: AnalyzerState): {
   });
   let lateral: number | null = null;
   let yawRateRadps: number | null = null;
+  const speedsOk =
+    previous.speedMps >= state.config.minSpeedMps &&
+    current.speedMps >= state.config.minSpeedMps;
   if (omega != null) {
     const speed = (current.speedMps + previous.speedMps) / 2;
     lateral = speed * omega;
-    if (
-      previous.speedMps >= state.config.minSpeedMps &&
-      current.speedMps >= state.config.minSpeedMps
-    ) {
+    if (speedsOk) {
       yawRateRadps = Math.abs(omega);
     }
+  } else if (speedsOk) {
+    // No heading signal — treat as straight so the next flick has an onset baseline.
+    yawRateRadps = 0;
   }
 
   return { longitudinal, lateral, yawRateRadps };
@@ -463,8 +481,17 @@ function detectFromMotion(
   }
 
   const yaw = state.yawRateRadps;
-  if (moving && !cornering && yaw != null && yaw >= state.config.harshSwerveRadps) {
-    const event = maybeEmit(state, "swerve", t, yaw, state.config.harshSwerveRadps, location, speed);
+  const swervePeak = resolveSwervePeak(state, t, speed, cornering, yaw);
+  if (swervePeak != null) {
+    const event = maybeEmit(
+      state,
+      "swerve",
+      t,
+      swervePeak,
+      state.config.harshSwerveRadps,
+      location,
+      speed,
+    );
     if (event) {
       emitted.push(event);
     }
@@ -512,6 +539,82 @@ function detectFromMotion(
   }
 
   return emitted;
+}
+
+/**
+ * Track a brief elevated-yaw episode. Emit when yaw falls again within
+ * `swerveMaxElevatedMs` after a sharp rise — sustained turns stay elevated and are ignored.
+ */
+function resolveSwervePeak(
+  state: AnalyzerState,
+  t: number,
+  speed: number | null,
+  cornering: boolean,
+  yaw: number | null,
+): number | null {
+  const thr = state.config.harshSwerveRadps;
+  const exitThr = thr * 0.5;
+  if (yaw == null) {
+    state.swerveElevatedSinceT = null;
+    state.swerveElevatedPeak = 0;
+    state.swerveElevatedRiseJerk = 0;
+    state.swerveElevatedAtSpeed = null;
+    return null;
+  }
+
+  if (yaw >= thr) {
+    if (state.swerveElevatedSinceT == null) {
+      state.swerveElevatedSinceT = t;
+      state.swerveElevatedPeak = yaw;
+      state.swerveElevatedRiseJerk = state.yawJerkRadps2 ?? 0;
+      state.swerveElevatedAtSpeed = speed;
+    } else {
+      if (yaw > state.swerveElevatedPeak) {
+        state.swerveElevatedPeak = yaw;
+      }
+      if (state.yawJerkRadps2 != null && state.yawJerkRadps2 > state.swerveElevatedRiseJerk) {
+        state.swerveElevatedRiseJerk = state.yawJerkRadps2;
+      }
+      if (speed != null) {
+        state.swerveElevatedAtSpeed =
+          state.swerveElevatedAtSpeed == null
+            ? speed
+            : Math.max(state.swerveElevatedAtSpeed, speed);
+      }
+    }
+    return null;
+  }
+
+  if (state.swerveElevatedSinceT == null) {
+    return null;
+  }
+
+  const elevatedMs = t - state.swerveElevatedSinceT;
+  const peak = state.swerveElevatedPeak;
+  const riseJerk = state.swerveElevatedRiseJerk;
+  const peakSpeed = state.swerveElevatedAtSpeed;
+  state.swerveElevatedSinceT = null;
+  state.swerveElevatedPeak = 0;
+  state.swerveElevatedRiseJerk = 0;
+  state.swerveElevatedAtSpeed = null;
+
+  if (yaw > exitThr) {
+    return null;
+  }
+
+  if (
+    isSwerveMotion({
+      speedMps: peakSpeed ?? speed,
+      cornering,
+      peakYawRadps: peak,
+      riseJerkRadps2: riseJerk,
+      elevatedMs,
+      config: state.config,
+    })
+  ) {
+    return peak;
+  }
+  return null;
 }
 
 function awardCleanKilometres(
@@ -643,11 +746,30 @@ function buildMetrics(state: AnalyzerState, t: number): LiveMetrics {
   const durationMs = Math.max(0, t - state.startedAtMs);
   const speedMps = currentSpeed(state);
   const moving = speedMps != null && speedMps >= state.config.minSpeedMps;
+  const cornering =
+    moving &&
+    state.lateralAccelMps2 != null &&
+    Math.abs(state.lateralAccelMps2) >= state.config.harshCornerMps2;
+  const elevatedMs =
+    state.swerveElevatedSinceT == null ? null : t - state.swerveElevatedSinceT;
+  const liveSwerve =
+    state.swerveElevatedSinceT != null &&
+    elevatedMs != null &&
+    elevatedMs <= state.config.swerveMaxElevatedMs &&
+    isSwerveMotion({
+      speedMps: state.swerveElevatedAtSpeed ?? speedMps,
+      cornering,
+      peakYawRadps: state.swerveElevatedPeak,
+      riseJerkRadps2: state.swerveElevatedRiseJerk,
+      elevatedMs: Math.max(elevatedMs, 1),
+      config: state.config,
+    });
+  const swerveYaw = liveSwerve ? state.swerveElevatedPeak : null;
   const levels = liveHarshLevels({
     moving,
     longitudinal: state.longitudinalAccelMps2,
     lateral: state.lateralAccelMps2,
-    yawRateRadps: state.yawRateRadps,
+    yawRateRadps: swerveYaw,
     config: state.config,
   });
   return {
@@ -999,6 +1121,13 @@ export function createTripAnalyzer(
     longitudinalAccelMps2: null,
     lateralAccelMps2: null,
     yawRateRadps: null,
+    prevYawRateRadps: null,
+    prevYawAtT: null,
+    yawJerkRadps2: null,
+    swerveElevatedSinceT: null,
+    swerveElevatedPeak: 0,
+    swerveElevatedRiseJerk: 0,
+    swerveElevatedAtSpeed: null,
     maxSpeedMps: null,
     speedSum: 0,
     speedCount: 0,
@@ -1041,8 +1170,20 @@ export function createTripAnalyzer(
     state.longitudinalAccelMps2 = accel.longitudinal;
     state.lateralAccelMps2 = accel.lateral;
     state.yawRateRadps = accel.yawRateRadps;
+    const yaw = accel.yawRateRadps;
+    state.yawJerkRadps2 =
+      yaw == null
+        ? null
+        : yawRateJerkRadps2(yaw, withRoad.t, state.prevYawRateRadps, state.prevYawAtT);
     const motion = detectFromMotion(state, withRoad.t, true);
     const impact = resolvePendingImpact(state, withRoad.t, false);
+    if (yaw == null) {
+      state.prevYawRateRadps = null;
+      state.prevYawAtT = null;
+    } else {
+      state.prevYawRateRadps = yaw;
+      state.prevYawAtT = withRoad.t;
+    }
     const newEvents = impact ? [...motion, impact] : motion;
     return { metrics: buildMetrics(state, withRoad.t), newEvents };
   };

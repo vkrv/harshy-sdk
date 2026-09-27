@@ -137,6 +137,12 @@ export type DetectorConfig = {
   harshHeavyX: number;
   /** |Yaw rate| for a swerve (rad/s). Track heading, or a chip course the mounted gyro confirms. Corners win when lateral g is also harsh. */
   harshSwerveRadps: number;
+  /** |Δyaw rate|/Δt (rad/s²). A sudden flick; gradual low-speed cornering stays below this. */
+  harshSwerveJerkRadps2: number;
+  /** Floor speed for swerve (m/s). Crawl / parking turns are not swerves. */
+  swerveMinSpeedMps: number;
+  /** Max time yaw may stay elevated before the rise is treated as a turn, not a swerve. */
+  swerveMaxElevatedMs: number;
   speedingMps: number | null;
   /** Drop below `speedingMps * speedingExitX` to close a speeding span. */
   speedingExitX: number;

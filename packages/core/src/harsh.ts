@@ -71,6 +71,57 @@ export function longitudinalHarshLevel(
   return harshLevelRank(accelLevel) >= harshLevelRank(brakeLevel) ? accelLevel : brakeLevel;
 }
 
+/** |Δω|/Δt between consecutive GPS yaw samples (rad/s²). */
+export function yawRateJerkRadps2(
+  yawRateRadps: number,
+  t: number,
+  previousYawRateRadps: number | null,
+  previousT: number | null,
+  maxDtSec = 8,
+): number | null {
+  if (previousYawRateRadps == null || previousT == null) {
+    return null;
+  }
+  const dtSec = (t - previousT) / 1000;
+  if (!(dtSec > 0) || dtSec > maxDtSec) {
+    return null;
+  }
+  return Math.abs(yawRateRadps - previousYawRateRadps) / dtSec;
+}
+
+/**
+ * Sudden heading-rate spike while moving fast enough — not a steady low-speed turn.
+ * Call when yaw has just fallen after a brief elevated peak (see detector elevation state).
+ */
+export function isSwerveMotion(input: {
+  speedMps: number | null;
+  cornering: boolean;
+  peakYawRadps: number | null;
+  riseJerkRadps2: number | null;
+  elevatedMs: number | null;
+  config: Pick<
+    DetectorConfig,
+    | "harshSwerveRadps"
+    | "harshSwerveJerkRadps2"
+    | "swerveMinSpeedMps"
+    | "swerveMaxElevatedMs"
+  >;
+}): boolean {
+  const { speedMps, cornering, peakYawRadps, riseJerkRadps2, elevatedMs, config } = input;
+  return (
+    speedMps != null &&
+    speedMps >= config.swerveMinSpeedMps &&
+    !cornering &&
+    peakYawRadps != null &&
+    peakYawRadps >= config.harshSwerveRadps &&
+    riseJerkRadps2 != null &&
+    riseJerkRadps2 >= config.harshSwerveJerkRadps2 &&
+    elevatedMs != null &&
+    elevatedMs > 0 &&
+    elevatedMs <= config.swerveMaxElevatedMs
+  );
+}
+
 export function liveHarshLevels(input: {
   moving: boolean;
   longitudinal: number | null;

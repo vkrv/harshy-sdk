@@ -339,6 +339,43 @@ internal data class LiveHarshLevels(
   val swerveLevel: String,
 )
 
+internal fun yawRateJerkRadps2(
+  yawRateRadps: Double,
+  t: Double,
+  previousYawRateRadps: Double?,
+  previousT: Double?,
+  maxDtSec: Double = 8.0,
+): Double? {
+  if (previousYawRateRadps == null || previousT == null) {
+    return null
+  }
+  val dtSec = (t - previousT) / 1000.0
+  if (dtSec <= 0.0 || dtSec > maxDtSec) {
+    return null
+  }
+  return kotlin.math.abs(yawRateRadps - previousYawRateRadps) / dtSec
+}
+
+internal fun isSwerveMotion(
+  speedMps: Double?,
+  cornering: Boolean,
+  peakYawRadps: Double?,
+  riseJerkRadps2: Double?,
+  elevatedMs: Double?,
+  config: DetectorConfig,
+): Boolean {
+  return speedMps != null &&
+    speedMps >= config.swerveMinSpeedMps &&
+    !cornering &&
+    peakYawRadps != null &&
+    peakYawRadps >= config.harshSwerveRadps &&
+    riseJerkRadps2 != null &&
+    riseJerkRadps2 >= config.harshSwerveJerkRadps2 &&
+    elevatedMs != null &&
+    elevatedMs > 0.0 &&
+    elevatedMs <= config.swerveMaxElevatedMs
+}
+
 internal fun liveHarshLevels(
   moving: Boolean,
   longitudinal: Double?,

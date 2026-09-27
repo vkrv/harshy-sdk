@@ -515,6 +515,36 @@ struct HarshyLiveHarshLevels {
   var swerveLevel: String
 }
 
+func harshyYawRateJerkRadps2(
+  yawRateRadps: Double,
+  t: Double,
+  previousYawRateRadps: Double?,
+  previousT: Double?,
+  maxDtSec: Double = 8
+) -> Double? {
+  guard let previousYawRateRadps, let previousT else { return nil }
+  let dtSec = (t - previousT) / 1000
+  guard dtSec > 0, dtSec <= maxDtSec else { return nil }
+  return abs(yawRateRadps - previousYawRateRadps) / dtSec
+}
+
+func harshyIsSwerveMotion(
+  speedMps: Double?,
+  cornering: Bool,
+  peakYawRadps: Double?,
+  riseJerkRadps2: Double?,
+  elevatedMs: Double?,
+  config: HarshyDetectorConfig
+) -> Bool {
+  guard let speedMps, let peakYawRadps, let riseJerkRadps2, let elevatedMs else { return false }
+  return speedMps >= config.swerveMinSpeedMps &&
+    !cornering &&
+    peakYawRadps >= config.harshSwerveRadps &&
+    riseJerkRadps2 >= config.harshSwerveJerkRadps2 &&
+    elevatedMs > 0 &&
+    elevatedMs <= config.swerveMaxElevatedMs
+}
+
 func harshyLiveHarshLevels(
   moving: Bool,
   longitudinal: Double?,

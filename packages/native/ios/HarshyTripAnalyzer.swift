@@ -30,6 +30,13 @@ public final class HarshyTripAnalyzer {
   private var longitudinalAccelMps2: Double?
   private var lateralAccelMps2: Double?
   private var yawRateRadps: Double?
+  private var prevYawRateRadps: Double?
+  private var prevYawAtT: Double?
+  private var yawJerkRadps2: Double?
+  private var swerveElevatedSinceT: Double?
+  private var swerveElevatedPeak = 0.0
+  private var swerveElevatedRiseJerk = 0.0
+  private var swerveElevatedAtSpeed: Double?
   private var maxSpeedMps: Double?
   private var speedSum = 0.0
   private var speedCount = 0
@@ -118,8 +125,24 @@ public final class HarshyTripAnalyzer {
     longitudinalAccelMps2 = accel.longitudinal
     lateralAccelMps2 = accel.lateral
     yawRateRadps = accel.yawRateRadps
+    let yaw = accel.yawRateRadps
+    yawJerkRadps2 = yaw.flatMap {
+      harshyYawRateJerkRadps2(
+        yawRateRadps: $0,
+        t: stored.t,
+        previousYawRateRadps: prevYawRateRadps,
+        previousT: prevYawAtT
+      )
+    }
     let motion = detectFromMotion(stored.t, includeSmooth: true)
     let impact = resolvePendingImpact(now: stored.t, force: false)
+    if let yaw {
+      prevYawRateRadps = yaw
+      prevYawAtT = stored.t
+    } else {
+      prevYawRateRadps = nil
+      prevYawAtT = nil
+    }
     let newEvents = impact.map { motion + [$0] } ?? motion
     return HarshyAnalyzerPush(metrics: buildMetrics(stored.t), newEvents: newEvents)
   }
@@ -262,12 +285,15 @@ public final class HarshyTripAnalyzer {
     )
     var lateral: Double?
     var yaw: Double?
+    let speedsOk = prevSpeed >= config.minSpeedMps && currentSpeed >= config.minSpeedMps
     if let omega {
       let speed = (currentSpeed + prevSpeed) / 2
       lateral = speed * omega
-      if prevSpeed >= config.minSpeedMps && currentSpeed >= config.minSpeedMps {
+      if speedsOk {
         yaw = abs(omega)
       }
+    } else if speedsOk {
+      yaw = 0
     }
     return (longitudinal, lateral, yaw)
   }
@@ -392,11 +418,11 @@ public final class HarshyTripAnalyzer {
       }
     }
     let yaw = yawRateRadps
-    if moving && !cornering, let yaw, yaw >= config.harshSwerveRadps {
+    if let peak = resolveSwervePeak(t: t, speed: speed, cornering: cornering, yaw: yaw) {
       if let event = maybeEmit(
         type: harshyEventSwerve,
         t: t,
-        peak: yaw,
+        peak: peak,
         threshold: config.harshSwerveRadps,
         location: loc,
         speedMps: speed
@@ -430,6 +456,65 @@ public final class HarshyTripAnalyzer {
       emitted.append(contentsOf: awardCleanKilometres(t: t, loc: loc, speed: speed))
     }
     return emitted
+  }
+
+  private func resolveSwervePeak(
+    t: Double,
+    speed: Double?,
+    cornering: Bool,
+    yaw: Double?
+  ) -> Double? {
+    let thr = config.harshSwerveRadps
+    let exitThr = thr * 0.5
+    guard let yaw else {
+      swerveElevatedSinceT = nil
+      swerveElevatedPeak = 0
+      swerveElevatedRiseJerk = 0
+      swerveElevatedAtSpeed = nil
+      return nil
+    }
+    if yaw >= thr {
+      if swerveElevatedSinceT == nil {
+        swerveElevatedSinceT = t
+        swerveElevatedPeak = yaw
+        swerveElevatedRiseJerk = yawJerkRadps2 ?? 0
+        swerveElevatedAtSpeed = speed
+      } else {
+        if yaw > swerveElevatedPeak {
+          swerveElevatedPeak = yaw
+        }
+        if let jerk = yawJerkRadps2, jerk > swerveElevatedRiseJerk {
+          swerveElevatedRiseJerk = jerk
+        }
+        if let speed {
+          swerveElevatedAtSpeed = max(swerveElevatedAtSpeed ?? speed, speed)
+        }
+      }
+      return nil
+    }
+    guard let since = swerveElevatedSinceT else { return nil }
+    let elevatedMs = t - since
+    let peak = swerveElevatedPeak
+    let riseJerk = swerveElevatedRiseJerk
+    let peakSpeed = swerveElevatedAtSpeed
+    swerveElevatedSinceT = nil
+    swerveElevatedPeak = 0
+    swerveElevatedRiseJerk = 0
+    swerveElevatedAtSpeed = nil
+    if yaw > exitThr {
+      return nil
+    }
+    if harshyIsSwerveMotion(
+      speedMps: peakSpeed ?? speed,
+      cornering: cornering,
+      peakYawRadps: peak,
+      riseJerkRadps2: riseJerk,
+      elevatedMs: elevatedMs,
+      config: config
+    ) {
+      return peak
+    }
+    return nil
   }
 
   private struct SmoothHold {
@@ -543,11 +628,27 @@ public final class HarshyTripAnalyzer {
     let durationMs = max(0, t - startedAtMs)
     let speedMps = currentSpeed()
     let moving = speedMps != nil && speedMps! >= config.minSpeedMps
+    let latAccel = lateralAccelMps2
+    let cornering = moving && latAccel != nil && abs(latAccel!) >= config.harshCornerMps2
+    let elevatedMs = swerveElevatedSinceT.map { t - $0 }
+    let liveSwerve =
+      swerveElevatedSinceT != nil &&
+      elevatedMs != nil &&
+      elevatedMs! <= config.swerveMaxElevatedMs &&
+      harshyIsSwerveMotion(
+        speedMps: swerveElevatedAtSpeed ?? speedMps,
+        cornering: cornering,
+        peakYawRadps: swerveElevatedPeak,
+        riseJerkRadps2: swerveElevatedRiseJerk,
+        elevatedMs: max(elevatedMs!, 1),
+        config: config
+      )
+    let swerveYaw = liveSwerve ? swerveElevatedPeak : nil
     let levels = harshyLiveHarshLevels(
       moving: moving,
       longitudinal: longitudinalAccelMps2,
       lateral: lateralAccelMps2,
-      yawRateRadps: yawRateRadps,
+      yawRateRadps: swerveYaw,
       config: config
     )
     let last = lastImu

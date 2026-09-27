@@ -80,6 +80,15 @@ export const detectorConfigSchema = z.object({
   harshMediumX: z.number().positive().default(DEFAULT_HARSH_MEDIUM_X),
   harshHeavyX: z.number().positive().default(DEFAULT_HARSH_HEAVY_X),
   harshSwerveRadps: z.number().positive().default(DEFAULT_DETECTOR_CONFIG.harshSwerveRadps),
+  harshSwerveJerkRadps2: z
+    .number()
+    .positive()
+    .default(DEFAULT_DETECTOR_CONFIG.harshSwerveJerkRadps2),
+  swerveMinSpeedMps: z.number().nonnegative().default(DEFAULT_DETECTOR_CONFIG.swerveMinSpeedMps),
+  swerveMaxElevatedMs: z
+    .number()
+    .positive()
+    .default(DEFAULT_DETECTOR_CONFIG.swerveMaxElevatedMs),
   speedingMps: z.number().positive().nullable(),
   speedingExitX: z.number().positive().max(1).default(DEFAULT_DETECTOR_CONFIG.speedingExitX),
   minSpeedMps: z.number().nonnegative(),

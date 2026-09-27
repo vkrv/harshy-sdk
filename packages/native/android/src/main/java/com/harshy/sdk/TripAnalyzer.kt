@@ -35,6 +35,13 @@ class TripAnalyzer(
   private var longitudinalAccelMps2: Double? = null
   private var lateralAccelMps2: Double? = null
   private var yawRateRadps: Double? = null
+  private var prevYawRateRadps: Double? = null
+  private var prevYawAtT: Double? = null
+  private var yawJerkRadps2: Double? = null
+  private var swerveElevatedSinceT: Double? = null
+  private var swerveElevatedPeak = 0.0
+  private var swerveElevatedRiseJerk = 0.0
+  private var swerveElevatedAtSpeed: Double? = null
   private var maxSpeedMps: Double? = null
   private var speedSum = 0.0
   private var speedCount = 0
@@ -112,8 +119,18 @@ class TripAnalyzer(
     longitudinalAccelMps2 = accel.longitudinal
     lateralAccelMps2 = accel.lateral
     yawRateRadps = accel.yawRateRadps
+    val yaw = accel.yawRateRadps
+    yawJerkRadps2 =
+      if (yaw == null) null else yawRateJerkRadps2(yaw, stored.t, prevYawRateRadps, prevYawAtT)
     val motion = detectFromMotion(stored.t, includeSmooth = true)
     val impact = resolvePendingImpact(stored.t, force = false)
+    if (yaw == null) {
+      prevYawRateRadps = null
+      prevYawAtT = null
+    } else {
+      prevYawRateRadps = yaw
+      prevYawAtT = stored.t
+    }
     val newEvents = if (impact != null) motion + impact else motion
     return AnalyzerPush(metrics = buildMetrics(stored.t), newEvents = newEvents)
   }
@@ -284,12 +301,15 @@ class TripAnalyzer(
     )
     var lateral: Double? = null
     var yaw: Double? = null
+    val speedsOk = prevSpeed >= config.minSpeedMps && currentSpeed >= config.minSpeedMps
     if (omega != null) {
       val speed = (currentSpeed + prevSpeed) / 2.0
       lateral = speed * omega
-      if (prevSpeed >= config.minSpeedMps && currentSpeed >= config.minSpeedMps) {
+      if (speedsOk) {
         yaw = abs(omega)
       }
+    } else if (speedsOk) {
+      yaw = 0.0
     }
     return GpsAccel(longitudinal, lateral, yaw)
   }
@@ -403,8 +423,8 @@ class TripAnalyzer(
     }
 
     val yaw = yawRateRadps
-    if (moving && !cornering && yaw != null && yaw >= config.harshSwerveRadps) {
-      maybeEmit(EVENT_SWERVE, t, yaw, config.harshSwerveRadps, loc, speed)?.let { emitted.add(it) }
+    resolveSwervePeak(t, speed, cornering, yaw)?.let { peak ->
+      maybeEmit(EVENT_SWERVE, t, peak, config.harshSwerveRadps, loc, speed)?.let { emitted.add(it) }
     }
 
     val accuracy = loc?.accuracyM
@@ -433,6 +453,62 @@ class TripAnalyzer(
     }
 
     return emitted
+  }
+
+  private fun resolveSwervePeak(
+    t: Double,
+    speed: Double?,
+    cornering: Boolean,
+    yaw: Double?,
+  ): Double? {
+    val thr = config.harshSwerveRadps
+    val exitThr = thr * 0.5
+    if (yaw == null) {
+      swerveElevatedSinceT = null
+      swerveElevatedPeak = 0.0
+      swerveElevatedRiseJerk = 0.0
+      swerveElevatedAtSpeed = null
+      return null
+    }
+    if (yaw >= thr) {
+      if (swerveElevatedSinceT == null) {
+        swerveElevatedSinceT = t
+        swerveElevatedPeak = yaw
+        swerveElevatedRiseJerk = yawJerkRadps2 ?: 0.0
+        swerveElevatedAtSpeed = speed
+      } else {
+        if (yaw > swerveElevatedPeak) {
+          swerveElevatedPeak = yaw
+        }
+        val jerk = yawJerkRadps2
+        if (jerk != null && jerk > swerveElevatedRiseJerk) {
+          swerveElevatedRiseJerk = jerk
+        }
+        if (speed != null) {
+          swerveElevatedAtSpeed = swerveElevatedAtSpeed?.let { max(it, speed) } ?: speed
+        }
+      }
+      return null
+    }
+    val since = swerveElevatedSinceT ?: return null
+    val elevatedMs = t - since
+    val peak = swerveElevatedPeak
+    val riseJerk = swerveElevatedRiseJerk
+    val peakSpeed = swerveElevatedAtSpeed
+    swerveElevatedSinceT = null
+    swerveElevatedPeak = 0.0
+    swerveElevatedRiseJerk = 0.0
+    swerveElevatedAtSpeed = null
+    if (yaw > exitThr) {
+      return null
+    }
+    return if (
+      isSwerveMotion(peakSpeed ?: speed, cornering, peak, riseJerk, elevatedMs, config)
+    ) {
+      peak
+    } else {
+      null
+    }
   }
 
   private fun awardCleanKilometres(t: Double, loc: LocationSample?, speed: Double?): List<DrivingEvent> {
@@ -542,7 +618,23 @@ class TripAnalyzer(
     val durationMs = max(0.0, t - startedAtMs)
     val speedMps = currentSpeed()
     val moving = speedMps != null && speedMps >= config.minSpeedMps
-    val levels = liveHarshLevels(moving, longitudinalAccelMps2, lateralAccelMps2, yawRateRadps, config)
+    val latAccel = lateralAccelMps2
+    val cornering = moving && latAccel != null && abs(latAccel) >= config.harshCornerMps2
+    val elevatedMs = swerveElevatedSinceT?.let { t - it }
+    val liveSwerve =
+      swerveElevatedSinceT != null &&
+        elevatedMs != null &&
+        elevatedMs <= config.swerveMaxElevatedMs &&
+        isSwerveMotion(
+          swerveElevatedAtSpeed ?: speedMps,
+          cornering,
+          swerveElevatedPeak,
+          swerveElevatedRiseJerk,
+          maxOf(elevatedMs, 1.0),
+          config,
+        )
+    val swerveYaw = if (liveSwerve) swerveElevatedPeak else null
+    val levels = liveHarshLevels(moving, longitudinalAccelMps2, lateralAccelMps2, swerveYaw, config)
     val last = lastImu
     val points = scoreEvents(events, config, distanceM, durationMs)
     return LiveMetrics(

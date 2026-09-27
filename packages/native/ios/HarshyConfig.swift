@@ -94,6 +94,9 @@ public struct HarshyDetectorConfig: Equatable, Sendable {
   public var harshMediumX: Double
   public var harshHeavyX: Double
   public var harshSwerveRadps: Double
+  public var harshSwerveJerkRadps2: Double
+  public var swerveMinSpeedMps: Double
+  public var swerveMaxElevatedMs: Double
   public var speedingMps: Double?
   public var speedingExitX: Double
   public var minSpeedMps: Double
@@ -135,6 +138,9 @@ public struct HarshyDetectorConfig: Equatable, Sendable {
     harshMediumX: Double = 1.5,
     harshHeavyX: Double = 2.0,
     harshSwerveRadps: Double = 0.45,
+    harshSwerveJerkRadps2: Double = 0.4,
+    swerveMinSpeedMps: Double = 5,
+    swerveMaxElevatedMs: Double = 2000,
     speedingMps: Double? = nil,
     speedingExitX: Double = 0.95,
     minSpeedMps: Double = 2,
@@ -173,6 +179,9 @@ public struct HarshyDetectorConfig: Equatable, Sendable {
     self.harshMediumX = harshMediumX
     self.harshHeavyX = harshHeavyX
     self.harshSwerveRadps = harshSwerveRadps
+    self.harshSwerveJerkRadps2 = harshSwerveJerkRadps2
+    self.swerveMinSpeedMps = swerveMinSpeedMps
+    self.swerveMaxElevatedMs = swerveMaxElevatedMs
     self.speedingMps = speedingMps
     self.speedingExitX = speedingExitX
     self.minSpeedMps = minSpeedMps

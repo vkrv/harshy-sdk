@@ -422,8 +422,11 @@ console.log("Loose score:", loose?.metrics.score);
 | `harshAccelMps2` | 4 | Acceleration threshold (m/s²) |
 | `harshBrakeMps2` | 4 | Braking threshold (m/s²) |
 | `harshCornerMps2` | 3.5 | Cornering threshold (m/s²) |
-| `harshSwerveRadps` | 0.5 | Swerve heading rate (rad/s) |
-| `minSpeedMps` | 2.5 | Minimum speed for events (m/s) |
+| `harshSwerveRadps` | 0.45 | Swerve peak yaw rate (rad/s) |
+| `harshSwerveJerkRadps2` | 0.4 | Swerve yaw-onset jerk (rad/s²) |
+| `swerveMinSpeedMps` | 5 | Minimum speed for a swerve (m/s) |
+| `swerveMaxElevatedMs` | 2000 | Max elevated-yaw window for a swerve (ms) |
+| `minSpeedMps` | 2 | Minimum speed for events (m/s) |
 | `speedingMps` | null | Speed limit for speeding events |
 | `impactPeakMps2` | 35 | Peak for possible impact (~3.5g) |
 | `impactSpeedDeltaMps` | 4 | GPS speed change for impact |

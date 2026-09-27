@@ -6,8 +6,10 @@ import {
   harshLevel,
   harshLevelLabel,
   harshLevelRank,
+  isSwerveMotion,
   liveHarshLevels,
   longitudinalHarshLevel,
+  yawRateJerkRadps2,
 } from "./harsh.js";
 
 describe("harshLevel", () => {
@@ -87,5 +89,28 @@ describe("liveHarshLevels", () => {
       config: DEFAULT_DETECTOR_CONFIG,
     });
     expect(levels.swerveLevel).toBe("light");
+  });
+});
+
+describe("swerve onset", () => {
+  it("measures yaw jerk between GPS windows", () => {
+    expect(yawRateJerkRadps2(0.45, 2000, 0, 1000)).toBeCloseTo(0.45, 5);
+    expect(yawRateJerkRadps2(0.45, 2000, null, null)).toBeNull();
+  });
+
+  it("requires speed, a sharp rise, and a brief elevated window", () => {
+    const base = {
+      speedMps: 6,
+      cornering: false,
+      peakYawRadps: 0.5,
+      riseJerkRadps2: 0.45,
+      elevatedMs: 1000,
+      config: DEFAULT_DETECTOR_CONFIG,
+    };
+    expect(isSwerveMotion(base)).toBe(true);
+    expect(isSwerveMotion({ ...base, speedMps: 3 })).toBe(false);
+    expect(isSwerveMotion({ ...base, riseJerkRadps2: 0.1 })).toBe(false);
+    expect(isSwerveMotion({ ...base, elevatedMs: 5000 })).toBe(false);
+    expect(isSwerveMotion({ ...base, cornering: true })).toBe(false);
   });
 });

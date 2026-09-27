@@ -77,7 +77,9 @@ export {
   harshLevel,
   harshLevelLabel,
   harshLevelRank,
+  isSwerveMotion,
   liveHarshLevels,
+  yawRateJerkRadps2,
   longitudinalHarshLevel,
 } from "./harsh.js";
 export {

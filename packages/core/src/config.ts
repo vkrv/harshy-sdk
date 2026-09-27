@@ -109,6 +109,12 @@ export const DEFAULT_DETECTOR_CONFIG: DetectorConfig = {
   harshMediumX: DEFAULT_HARSH_MEDIUM_X,
   harshHeavyX: DEFAULT_HARSH_HEAVY_X,
   harshSwerveRadps: 0.45,
+  /** |Δyaw|/Δt that marks a sudden flick (rad/s²). Steady cornering stays below this. */
+  harshSwerveJerkRadps2: 0.4,
+  /** Swerve needs at least this speed (above crawl turns). */
+  swerveMinSpeedMps: 5,
+  /** Yaw must fall again within this window or the rise counts as a turn, not a swerve. */
+  swerveMaxElevatedMs: 2000,
   speedingMps: null,
   speedingExitX: 0.95,
   minSpeedMps: 2,

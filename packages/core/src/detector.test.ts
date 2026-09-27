@@ -116,7 +116,6 @@ describe("detector", () => {
     expect(types.has("harsh_brake")).toBe(true);
     expect(types.has("harsh_accel")).toBe(true);
     expect(types.has("harsh_corner")).toBe(true);
-    expect(types.has("swerve")).toBe(true);
     expect(types.has("smooth_accel")).toBe(true);
     expect(types.has("smooth_brake")).toBe(true);
     expect(types.has("smooth_corner")).toBe(true);
@@ -209,12 +208,48 @@ describe("detector", () => {
     });
     const start = { lat: 59.46, lon: 24.82 };
     const mid = destination(start.lat, start.lon, 0, 6);
-    const end = destination(mid.lat, mid.lon, 26, 6);
+    const peak = destination(mid.lat, mid.lon, 26, 6);
+    const settle = destination(peak.lat, peak.lon, 26, 6);
     analyzer.pushLocation(placed(0, 6, 0, start.lat, start.lon));
     analyzer.pushLocation(placed(1000, 6, 0, mid.lat, mid.lon));
-    const flick = analyzer.pushLocation(placed(2000, 6, 26, end.lat, end.lon));
+    analyzer.pushLocation(placed(2000, 6, 26, peak.lat, peak.lon));
+    const flick = analyzer.pushLocation(placed(3000, 6, 26, settle.lat, settle.lon));
     expect(flick.newEvents.some((event) => event.type === "swerve")).toBe(true);
-    expect(flick.newEvents.some((event) => event.type === "harsh_corner")).toBe(false);
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_corner")).toBe(false);
+  });
+
+  it("does not score a sustained low-speed turn as a swerve", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "steady-turn",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    let point = { lat: 59.46, lon: 24.82 };
+    analyzer.pushLocation(placed(0, 6, 0, point.lat, point.lon));
+    for (let i = 1; i <= 6; i += 1) {
+      const course = i * 26;
+      point = destination(point.lat, point.lon, course, 6);
+      const step = analyzer.pushLocation(placed(i * 1000, 6, course, point.lat, point.lon));
+      expect(step.newEvents.some((event) => event.type === "swerve")).toBe(false);
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "swerve")).toBe(false);
+  });
+
+  it("does not score a sharp heading flick below swerve min speed", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "crawl-flick",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    const start = { lat: 59.46, lon: 24.82 };
+    const mid = destination(start.lat, start.lon, 0, 3);
+    const peak = destination(mid.lat, mid.lon, 26, 3);
+    const settle = destination(peak.lat, peak.lon, 26, 3);
+    analyzer.pushLocation(placed(0, 3, 0, start.lat, start.lon));
+    analyzer.pushLocation(placed(1000, 3, 0, mid.lat, mid.lon));
+    analyzer.pushLocation(placed(2000, 3, 26, peak.lat, peak.lon));
+    const flick = analyzer.pushLocation(placed(3000, 3, 26, settle.lat, settle.lon));
+    expect(flick.newEvents.some((event) => event.type === "swerve")).toBe(false);
   });
 
   it("does not treat a handheld phone twist as a swerve", () => {

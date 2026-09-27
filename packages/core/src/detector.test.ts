@@ -388,6 +388,12 @@ describe("detector", () => {
     expect(short).toBeLessThan(100);
     expect(long).toBeGreaterThan(short);
     expect(long).toBeLessThanOrEqual(100);
+    const refDrop = 100 - scoreEvents(events, DEFAULT_DETECTOR_CONFIG, {
+      distanceM: 5_000,
+      durationMs: 10 * 60_000,
+    });
+    const farDrop = 100 - long;
+    expect(farDrop).toBeGreaterThan(refDrop * 0.55);
   });
 
   it("adds a flat smooth credit and will not climb past the cap", () => {

@@ -1,6 +1,8 @@
 import { tagCompoundOverlaps } from "./compound.js";
 import {
   mergeDetectorConfig,
+  SCORE_EXPOSURE_MAX,
+  SCORE_EXPOSURE_MIN,
   SCORE_MAX,
   SCORE_PENALTY_X,
   SMOOTH_CEILING_X,
@@ -800,7 +802,7 @@ export function scoreExposureScale(
   void durationMs;
   const km = Math.max(distanceM / 1000, config.score.minDistanceKm);
   const exposure = km / config.score.refDistanceKm;
-  return clamp(1 / Math.max(exposure, 1e-6), 0.2, 4);
+  return clamp(1 / Math.max(exposure, 1e-6), SCORE_EXPOSURE_MIN, SCORE_EXPOSURE_MAX);
 }
 
 export function scoreEvents(

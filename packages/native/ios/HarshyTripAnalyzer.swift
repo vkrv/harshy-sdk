@@ -691,7 +691,7 @@ public func harshyScoreExposureScale(
 ) -> Double {
   let km = max(distanceM / 1000, config.score.minDistanceKm)
   let exposure = km / config.score.refDistanceKm
-  return harshyClamp(1 / max(exposure, 1e-6), 0.2, 4)
+  return harshyClamp(1 / max(exposure, 1e-6), harshyScoreExposureMin, harshyScoreExposureMax)
 }
 
 public func harshyEventScorePoints(

@@ -677,7 +677,7 @@ fun createTripAnalyzer(
 fun scoreExposureScale(distanceM: Double, durationMs: Double, config: DetectorConfig): Double {
   val km = max(distanceM / 1000.0, config.score.minDistanceKm)
   val exposure = km / config.score.refDistanceKm
-  return clamp(1 / max(exposure, 1e-6), 0.2, 4.0)
+  return clamp(1 / max(exposure, 1e-6), SCORE_EXPOSURE_MIN, SCORE_EXPOSURE_MAX)
 }
 
 fun eventScorePoints(event: DrivingEvent, config: DetectorConfig, distanceM: Double): Double {

@@ -2,6 +2,8 @@ import Foundation
 
 public let harshyScorePenaltyX = 1.0 / 2.0
 public let harshyScoreMax = 120.0
+public let harshyScoreExposureMin = 0.6
+public let harshyScoreExposureMax = 1.6
 public let harshySmoothFloorMps2 = 0.5
 public let harshySmoothCeilingX = 0.6
 public let harshySmoothHoldMs = 3000.0

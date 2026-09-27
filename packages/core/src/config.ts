@@ -33,6 +33,14 @@ export const SCORE_PENALTY_X = 1 / 2;
 /** A smooth trip can rise above 100, and stops here. */
 export const SCORE_MAX = 120;
 
+/**
+ * How far distance may stretch one event's weight.
+ * A short trip is at most 1.6× the 5 km reference. A long trip keeps at least 0.6×.
+ * Time is not part of this.
+ */
+export const SCORE_EXPOSURE_MIN = 0.6;
+export const SCORE_EXPOSURE_MAX = 1.6;
+
 /** Gentle accel, brake, or corner must be at least this strong (m/s²). */
 export const SMOOTH_FLOOR_MPS2 = 0.5;
 

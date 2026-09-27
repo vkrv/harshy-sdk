@@ -6,6 +6,12 @@ const val SCORE_PENALTY_X = 1.0 / 2.0
 /** A smooth trip can rise above 100, and stops here. */
 const val SCORE_MAX = 120.0
 
+/** A long trip keeps at least this share of each event's reference weight. Time is not used. */
+const val SCORE_EXPOSURE_MIN = 0.6
+
+/** A short trip is at most this multiple of the reference weight. */
+const val SCORE_EXPOSURE_MAX = 1.6
+
 const val SMOOTH_FLOOR_MPS2 = 0.5
 const val SMOOTH_CEILING_X = 0.6
 const val SMOOTH_HOLD_MS = 3000.0

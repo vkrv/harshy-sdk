@@ -32,6 +32,48 @@ function loc(t: number, speedMps: number, courseDeg = 0): LocationSample {
   };
 }
 
+function destination(
+  lat: number,
+  lon: number,
+  bearingDeg: number,
+  distanceM: number,
+): { lat: number; lon: number } {
+  const earth = 6_371_000;
+  const heading = (bearingDeg * Math.PI) / 180;
+  const lat1 = (lat * Math.PI) / 180;
+  const lon1 = (lon * Math.PI) / 180;
+  const ang = distanceM / earth;
+  const lat2 = Math.asin(
+    Math.sin(lat1) * Math.cos(ang) + Math.cos(lat1) * Math.sin(ang) * Math.cos(heading),
+  );
+  const lon2 =
+    lon1 +
+    Math.atan2(
+      Math.sin(heading) * Math.sin(ang) * Math.cos(lat1),
+      Math.cos(ang) - Math.sin(lat1) * Math.sin(lat2),
+    );
+  return { lat: (lat2 * 180) / Math.PI, lon: (lon2 * 180) / Math.PI };
+}
+
+function placed(
+  t: number,
+  speedMps: number,
+  courseDeg: number,
+  lat: number,
+  lon: number,
+): LocationSample {
+  return {
+    t,
+    lat,
+    lon,
+    altitudeM: null,
+    speedMps,
+    courseDeg,
+    accuracyM: 4,
+    altitudeAccuracyM: null,
+  };
+}
+
 function gyroYaw(t: number, z = 2): ImuSample {
   return {
     t,
@@ -142,8 +184,12 @@ describe("detector", () => {
       startedAtMs: 0,
       device: { platform: "web", model: "test" },
     });
-    analyzer.pushLocation(loc(0, 6, 0));
-    const flick = analyzer.pushLocation(loc(1000, 6, 26));
+    const start = { lat: 59.46, lon: 24.82 };
+    const mid = destination(start.lat, start.lon, 0, 6);
+    const end = destination(mid.lat, mid.lon, 26, 6);
+    analyzer.pushLocation(placed(0, 6, 0, start.lat, start.lon));
+    analyzer.pushLocation(placed(1000, 6, 0, mid.lat, mid.lon));
+    const flick = analyzer.pushLocation(placed(2000, 6, 26, end.lat, end.lon));
     expect(flick.newEvents.some((event) => event.type === "swerve")).toBe(true);
     expect(flick.newEvents.some((event) => event.type === "harsh_corner")).toBe(false);
   });
@@ -171,6 +217,39 @@ describe("detector", () => {
     analyzer.pushLocation(loc(1000, 6, 0));
     const twist = analyzer.pushImu(gyroYaw(1100));
     expect(twist.newEvents.some((event) => event.type === "swerve")).toBe(false);
+  });
+
+  it("does not score a chip bearing that the straight road does not turn", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "straight-bearing",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    const start = { lat: 59.46078, lon: 24.81843 };
+    const mid = destination(start.lat, start.lon, 240, 3);
+    const end = destination(mid.lat, mid.lon, 244, 4.4);
+    analyzer.pushLocation(placed(0, 0, 240, start.lat, start.lon));
+    analyzer.pushLocation(placed(1000, 3.38, 240, mid.lat, mid.lon));
+    analyzer.pushImu(gyroYaw(1500, 0.02));
+    const glitch = analyzer.pushLocation(placed(2000, 4.44, 28, end.lat, end.lon));
+    expect(glitch.newEvents.some((event) => event.type === "harsh_corner")).toBe(false);
+    expect(glitch.newEvents.some((event) => event.type === "swerve")).toBe(false);
+  });
+
+  it("keeps a chip bearing the road rejects when the mounted phone is rotating with it", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "gyro-confirms",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    const start = { lat: 59.46078, lon: 24.81843 };
+    const mid = destination(start.lat, start.lon, 240, 3);
+    const end = destination(mid.lat, mid.lon, 244, 4.4);
+    analyzer.pushLocation(placed(0, 0, 240, start.lat, start.lon));
+    analyzer.pushLocation(placed(1000, 3.38, 240, mid.lat, mid.lon));
+    analyzer.pushImu(gyroYaw(1500, 2.6));
+    const confirmed = analyzer.pushLocation(placed(2000, 4.44, 28, end.lat, end.lon));
+    expect(confirmed.newEvents.some((event) => event.type === "harsh_corner")).toBe(true);
   });
 
   it("ignores GPS heading jumps below min speed", () => {
@@ -207,9 +286,12 @@ describe("detector", () => {
       startedAtMs: 0,
       device: { platform: "web", model: "test" },
     });
-    analyzer.pushLocation(loc(0, 12, 0));
-    analyzer.pushLocation(loc(1000, 12, 0));
-    const both = analyzer.pushLocation(loc(2000, 7, 45));
+    const start = { lat: 59.46, lon: 24.82 };
+    const mid = destination(start.lat, start.lon, 0, 12);
+    const end = destination(mid.lat, mid.lon, 45, 7);
+    analyzer.pushLocation(placed(0, 12, 0, start.lat, start.lon));
+    analyzer.pushLocation(placed(1000, 12, 0, mid.lat, mid.lon));
+    const both = analyzer.pushLocation(placed(2000, 7, 45, end.lat, end.lon));
     const types = new Set(both.newEvents.map((event) => event.type));
     expect(types.has("harsh_brake")).toBe(true);
     expect(types.has("harsh_corner")).toBe(true);

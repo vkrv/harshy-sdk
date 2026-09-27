@@ -14,6 +14,24 @@ class TripAnalyzerTest {
     harshCornerMps2 = 50.0,
   )
 
+  private fun shift(lat: Double, lon: Double, bearingDeg: Double, distanceM: Double): Pair<Double, Double> {
+    val earth = 6_371_000.0
+    val heading = Math.toRadians(bearingDeg)
+    val lat1 = Math.toRadians(lat)
+    val lon1 = Math.toRadians(lon)
+    val ang = distanceM / earth
+    val lat2 = Math.asin(Math.sin(lat1) * Math.cos(ang) + Math.cos(lat1) * Math.sin(ang) * Math.cos(heading))
+    val lon2 = lon1 + Math.atan2(
+      Math.sin(heading) * Math.sin(ang) * Math.cos(lat1),
+      Math.cos(ang) - Math.sin(lat1) * Math.sin(lat2),
+    )
+    return Math.toDegrees(lat2) to Math.toDegrees(lon2)
+  }
+
+  private fun at(t: Double, speedMps: Double, courseDeg: Double, lat: Double, lon: Double): LocationSample {
+    return LocationSample(t = t, lat = lat, lon = lon, speedMps = speedMps, courseDeg = courseDeg, accuracyM = 4.0)
+  }
+
   private fun loc(t: Double, speedMps: Double, courseDeg: Double = 0.0): LocationSample {
     return LocationSample(
       t = t,
@@ -147,16 +165,45 @@ class TripAnalyzerTest {
 
   @Test
   fun emitsGpsSwerveWhenMoving() {
+    val start = 59.46 to 24.82
+    val mid = shift(start.first, start.second, 0.0, 6.0)
+    val end = shift(mid.first, mid.second, 26.0, 6.0)
     val session = analyzeTrip(
-      location = listOf(loc(0.0, 6.0, 0.0), loc(1000.0, 6.0, 26.0)),
+      location = listOf(
+        at(0.0, 6.0, 0.0, start.first, start.second),
+        at(1000.0, 6.0, 0.0, mid.first, mid.second),
+        at(2000.0, 6.0, 26.0, end.first, end.second),
+      ),
       imu = emptyList(),
       sessionId = "swerve",
       startedAtMs = 0.0,
-      endedAtMs = 2000.0,
+      endedAtMs = 3000.0,
       device = DeviceInfo("android", "test"),
       config = DetectorConfig.DEFAULT,
     )
     assertTrue(session.events.any { it.type == EVENT_SWERVE })
+    assertFalse(session.events.any { it.type == EVENT_HARSH_CORNER })
+  }
+
+  @Test
+  fun ignoresChipBearingOnAStraightRoad() {
+    val start = 59.46078 to 24.81843
+    val mid = shift(start.first, start.second, 240.0, 3.0)
+    val end = shift(mid.first, mid.second, 244.0, 4.4)
+    val session = analyzeTrip(
+      location = listOf(
+        at(0.0, 0.0, 240.0, start.first, start.second),
+        at(1000.0, 3.38, 240.0, mid.first, mid.second),
+        at(2000.0, 4.44, 28.0, end.first, end.second),
+      ),
+      imu = emptyList(),
+      sessionId = "straight",
+      startedAtMs = 0.0,
+      endedAtMs = 3000.0,
+      device = DeviceInfo("android", "test"),
+      config = DetectorConfig.DEFAULT,
+    )
+    assertFalse(session.events.any { it.type == EVENT_HARSH_CORNER || it.type == EVENT_SWERVE })
   }
 
   @Test

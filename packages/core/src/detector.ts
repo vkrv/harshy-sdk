@@ -8,13 +8,15 @@ import {
 } from "./drivePath.js";
 import {
   clamp,
+  confirmedYawRadps,
   derivedCourseDeg,
   derivedSpeedMps,
   haversineM,
   magnitude,
   mpsToKmh,
+  pathBearingDeg,
   severityFromPeak,
-  unwrapDeltaDeg,
+  verticalGyroRadps,
 } from "./geo.js";
 import { harshEventLevel, harshLevelRank, liveHarshLevels } from "./harsh.js";
 import { advanceHeadingFilter, emptyHeadingFilter, type HeadingFilter } from "./heading.js";
@@ -220,13 +222,22 @@ function gpsWindowAccel(state: AnalyzerState): {
   }
 
   const longitudinal = (current.speedMps - previous.speedMps) / dtSec;
+  const previousIndex = state.location.lastIndexOf(previous);
+  const before = previousIndex > 0 ? state.location[previousIndex - 1] : null;
+  const omega = confirmedYawRadps({
+    dtSec,
+    chipFromDeg: previous.courseDeg,
+    chipToDeg: current.courseDeg,
+    pathFromDeg: pathBearingDeg(before, previous),
+    pathToDeg: pathBearingDeg(previous, current),
+    verticalGyroRadps: meanVerticalGyro(state, previous.t, current.t),
+    phoneHandheld: state.openHandheld != null,
+  });
   let lateral: number | null = null;
   let yawRateRadps: number | null = null;
-  if (current.courseDeg != null && previous.courseDeg != null) {
-    const omega = toRadSafe(unwrapDeltaDeg(previous.courseDeg, current.courseDeg)) / dtSec;
+  if (omega != null) {
     const speed = (current.speedMps + previous.speedMps) / 2;
     lateral = speed * omega;
-    // GPS course is junk when the car is stopped; phone gyro is not vehicle heading.
     if (
       previous.speedMps >= state.config.minSpeedMps &&
       current.speedMps >= state.config.minSpeedMps
@@ -238,8 +249,25 @@ function gpsWindowAccel(state: AnalyzerState): {
   return { longitudinal, lateral, yawRateRadps };
 }
 
-function toRadSafe(deg: number): number {
-  return (deg * Math.PI) / 180;
+function meanVerticalGyro(state: AnalyzerState, fromT: number, toT: number): number | null {
+  let sum = 0;
+  let count = 0;
+  for (let i = state.imu.length - 1; i >= 0; i -= 1) {
+    const sample = state.imu[i];
+    if (!sample || sample.t > toT) {
+      continue;
+    }
+    if (sample.t < fromT) {
+      break;
+    }
+    const yaw = verticalGyroRadps(sample.gyro, sample.gravity);
+    if (yaw == null) {
+      continue;
+    }
+    sum += yaw;
+    count += 1;
+  }
+  return count === 0 ? null : sum / count;
 }
 
 function currentSpeed(state: AnalyzerState): number | null {

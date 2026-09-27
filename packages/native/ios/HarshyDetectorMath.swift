@@ -150,6 +150,79 @@ func harshyDerivedSpeedMps(
 let harshyDerivedCourseMinM = 2.0
 let harshyGpsAccelMinDtSec = 0.2
 let harshyGpsAccelMaxDtSec = 8.0
+let harshyYawCourseDisagreeDeg = 45.0
+let harshyYawGyroConfirmRatio = 0.5
+let harshyYawGyroConfirmMaxRatio = 2.5
+
+func harshyPathBearingDeg(
+  from: HarshyLocationSample?,
+  to: HarshyLocationSample,
+  minDistanceM: Double = harshyDerivedCourseMinM
+) -> Double? {
+  guard let from, harshyHaversineM(from, to) >= minDistanceM else { return nil }
+  let y = sin(harshyToRad(to.lon - from.lon)) * cos(harshyToRad(to.lat))
+  let x =
+    cos(harshyToRad(from.lat)) * sin(harshyToRad(to.lat)) -
+    sin(harshyToRad(from.lat)) * cos(harshyToRad(to.lat)) * cos(harshyToRad(to.lon - from.lon))
+  let deg = harshyToDeg(atan2(y, x))
+  return deg.isFinite ? harshyWrapCourseDeg(deg) : nil
+}
+
+func harshyVerticalGyroRadps(gyro: HarshyVec3?, gravity: HarshyVec3?) -> Double? {
+  guard let gyro, let gravity else { return nil }
+  let g = hypot(gravity.x, hypot(gravity.y, gravity.z))
+  guard g >= 0.5 else { return nil }
+  let about = (gyro.x * gravity.x + gyro.y * gravity.y + gyro.z * gravity.z) / g
+  return about.isFinite ? about : nil
+}
+
+func harshyConfirmedYawRadps(
+  dtSec: Double,
+  chipFromDeg: Double?,
+  chipToDeg: Double?,
+  pathFromDeg: Double?,
+  pathToDeg: Double?,
+  verticalGyroRadps: Double?,
+  phoneHandheld: Bool
+) -> Double? {
+  guard dtSec.isFinite, dtSec > 0 else { return nil }
+  let chipDelta: Double? = {
+    guard let chipFromDeg, let chipToDeg, chipFromDeg.isFinite, chipToDeg.isFinite else { return nil }
+    return harshyUnwrapDeltaDeg(fromDeg: chipFromDeg, toDeg: chipToDeg)
+  }()
+  let pathDelta: Double? = {
+    guard let pathFromDeg, let pathToDeg, pathFromDeg.isFinite, pathToDeg.isFinite else { return nil }
+    return harshyUnwrapDeltaDeg(fromDeg: pathFromDeg, toDeg: pathToDeg)
+  }()
+  let chipOmega = chipDelta.map { harshyToRad($0) / dtSec }
+  let pathOmega = pathDelta.map { harshyToRad($0) / dtSec }
+  if let pathOmega, let chipOmega, let chipDelta, let pathDelta {
+    if abs(chipDelta - pathDelta) <= harshyYawCourseDisagreeDeg {
+      return pathOmega
+    }
+    if harshyGyroConfirmsChipYaw(chipOmega, gyro: verticalGyroRadps, phoneHandheld: phoneHandheld) {
+      return chipOmega
+    }
+    return pathOmega
+  }
+  if let pathOmega { return pathOmega }
+  if let chipOmega, harshyGyroConfirmsChipYaw(chipOmega, gyro: verticalGyroRadps, phoneHandheld: phoneHandheld) {
+    return chipOmega
+  }
+  return nil
+}
+
+private func harshyGyroConfirmsChipYaw(
+  _ chipOmega: Double,
+  gyro: Double?,
+  phoneHandheld: Bool
+) -> Bool {
+  guard !phoneHandheld, let gyro, gyro.isFinite else { return false }
+  let chip = abs(chipOmega)
+  let spin = abs(gyro)
+  if chip < 1e-6 { return spin < 0.05 }
+  return spin >= chip * harshyYawGyroConfirmRatio && spin <= chip * harshyYawGyroConfirmMaxRatio
+}
 
 func harshyDerivedCourseDeg(
   from: HarshyLocationSample?,
@@ -163,13 +236,7 @@ func harshyDerivedCourseDeg(
   guard let from else { return nil }
   let dtSec = (to.t - from.t) / 1000
   guard dtSec.isFinite, dtSec >= 0.05, dtSec <= maxDtSec else { return nil }
-  guard harshyHaversineM(from, to) >= minDistanceM else { return nil }
-  let y = sin(harshyToRad(to.lon - from.lon)) * cos(harshyToRad(to.lat))
-  let x =
-    cos(harshyToRad(from.lat)) * sin(harshyToRad(to.lat)) -
-    sin(harshyToRad(from.lat)) * cos(harshyToRad(to.lat)) * cos(harshyToRad(to.lon - from.lon))
-  let deg = harshyToDeg(atan2(y, x))
-  return deg.isFinite ? harshyWrapCourseDeg(deg) : nil
+  return harshyPathBearingDeg(from: from, to: to, minDistanceM: minDistanceM)
 }
 
 func harshyWatchKinematicActivity(_ activity: String, speedMps: Double?) -> String {

@@ -24,16 +24,22 @@ export {
   type TripAnalyzerOptions,
 } from "./detector.js";
 export {
+  YAW_COURSE_DISAGREE_DEG,
+  YAW_GYRO_CONFIRM_MAX_RATIO,
+  YAW_GYRO_CONFIRM_RATIO,
   clamp,
+  confirmedYawRadps,
   derivedCourseDeg,
   derivedSpeedMps,
   haversineM,
   magnitude,
   mpsToKmh,
+  pathBearingDeg,
   severityFromPeak,
   toDeg,
   toRad,
   unwrapDeltaDeg,
+  verticalGyroRadps,
   wrapCourseDeg,
 } from "./geo.js";
 export {

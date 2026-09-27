@@ -12,6 +12,35 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     return config
   }
 
+  private func shift(
+    _ lat: Double,
+    _ lon: Double,
+    bearingDeg: Double,
+    distanceM: Double
+  ) -> (lat: Double, lon: Double) {
+    let earth = 6_371_000.0
+    let heading = bearingDeg * .pi / 180
+    let lat1 = lat * .pi / 180
+    let lon1 = lon * .pi / 180
+    let ang = distanceM / earth
+    let lat2 = asin(sin(lat1) * cos(ang) + cos(lat1) * sin(ang) * cos(heading))
+    let lon2 = lon1 + atan2(
+      sin(heading) * sin(ang) * cos(lat1),
+      cos(ang) - sin(lat1) * sin(lat2)
+    )
+    return (lat2 * 180 / .pi, lon2 * 180 / .pi)
+  }
+
+  private func at(
+    _ t: Double,
+    speedMps: Double,
+    courseDeg: Double,
+    lat: Double,
+    lon: Double
+  ) -> HarshyLocationSample {
+    HarshyLocationSample(t: t, lat: lat, lon: lon, speedMps: speedMps, courseDeg: courseDeg, accuracyM: 4)
+  }
+
   private func loc(_ t: Double, speedMps: Double, courseDeg: Double = 0) -> HarshyLocationSample {
     HarshyLocationSample(
       t: t,
@@ -132,15 +161,42 @@ final class HarshyTripAnalyzerTests: XCTestCase {
   }
 
   func testEmitsGpsSwerveWhenMoving() {
+    let start = (lat: 59.46, lon: 24.82)
+    let mid = shift(start.lat, start.lon, bearingDeg: 0, distanceM: 6)
+    let end = shift(mid.lat, mid.lon, bearingDeg: 26, distanceM: 6)
     let session = harshyAnalyzeTrip(
-      location: [loc(0, speedMps: 6, courseDeg: 0), loc(1000, speedMps: 6, courseDeg: 26)],
+      location: [
+        at(0, speedMps: 6, courseDeg: 0, lat: start.lat, lon: start.lon),
+        at(1000, speedMps: 6, courseDeg: 0, lat: mid.lat, lon: mid.lon),
+        at(2000, speedMps: 6, courseDeg: 26, lat: end.lat, lon: end.lon),
+      ],
       imu: [],
       sessionId: "swerve",
       startedAtMs: 0,
-      endedAtMs: 2000,
+      endedAtMs: 3000,
       device: HarshyDeviceInfo(platform: "ios", model: "test")
     )
     XCTAssertTrue(session.events.contains { $0.type == harshyEventSwerve })
+    XCTAssertFalse(session.events.contains { $0.type == harshyEventHarshCorner })
+  }
+
+  func testIgnoresChipBearingOnAStraightRoad() {
+    let start = (lat: 59.46078, lon: 24.81843)
+    let mid = shift(start.lat, start.lon, bearingDeg: 240, distanceM: 3)
+    let end = shift(mid.lat, mid.lon, bearingDeg: 244, distanceM: 4.4)
+    let session = harshyAnalyzeTrip(
+      location: [
+        at(0, speedMps: 0, courseDeg: 240, lat: start.lat, lon: start.lon),
+        at(1000, speedMps: 3.38, courseDeg: 240, lat: mid.lat, lon: mid.lon),
+        at(2000, speedMps: 4.44, courseDeg: 28, lat: end.lat, lon: end.lon),
+      ],
+      imu: [],
+      sessionId: "straight",
+      startedAtMs: 0,
+      endedAtMs: 3000,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    XCTAssertFalse(session.events.contains { $0.type == harshyEventHarshCorner || $0.type == harshyEventSwerve })
   }
 
   func testEmitsPhoneHandheldWhenPickedUpWhileMoving() {

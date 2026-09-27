@@ -122,7 +122,7 @@ export type DetectorConfig = {
   harshMediumX: number;
   /** Peak / threshold at which a harsh event becomes heavy. */
   harshHeavyX: number;
-  /** |GPS yaw rate| for a swerve (rad/s). Phone gyro is ignored. Corners win when lateral g is also harsh. */
+  /** |Yaw rate| for a swerve (rad/s). Track heading, or a chip course the mounted gyro confirms. Corners win when lateral g is also harsh. */
   harshSwerveRadps: number;
   speedingMps: number | null;
   /** Drop below `speedingMps * speedingExitX` to close a speeding span. */

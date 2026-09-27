@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  confirmedYawRadps,
   derivedCourseDeg,
   derivedSpeedMps,
   haversineM,
   magnitude,
+  toRad,
   unwrapDeltaDeg,
   wrapCourseDeg,
 } from "./geo.js";
@@ -52,5 +54,64 @@ describe("geo", () => {
     expect(inferred).toBeLessThan(100);
     expect(derivedCourseDeg(from, { ...east, courseDeg: 12 })).toBeCloseTo(12);
     expect(derivedCourseDeg(null, east)).toBeNull();
+  });
+
+  it("uses the track when the chip course agrees, and only a mounted gyro when it does not", () => {
+    const turn = toRad(26);
+    expect(
+      confirmedYawRadps({
+        dtSec: 1,
+        chipFromDeg: 0,
+        chipToDeg: 26,
+        pathFromDeg: 0,
+        pathToDeg: 26,
+        verticalGyroRadps: null,
+        phoneHandheld: false,
+      }),
+    ).toBeCloseTo(turn);
+
+    const straight = toRad(4);
+    const glitch = toRad(unwrapDeltaDeg(240, 28));
+    const disagree = {
+      dtSec: 1,
+      chipFromDeg: 240,
+      chipToDeg: 28,
+      pathFromDeg: 240,
+      pathToDeg: 244,
+    };
+    expect(
+      confirmedYawRadps({ ...disagree, verticalGyroRadps: 0.02, phoneHandheld: false }),
+    ).toBeCloseTo(straight);
+    expect(
+      confirmedYawRadps({ ...disagree, verticalGyroRadps: glitch, phoneHandheld: false }),
+    ).toBeCloseTo(glitch);
+    expect(
+      confirmedYawRadps({ ...disagree, verticalGyroRadps: glitch, phoneHandheld: true }),
+    ).toBeCloseTo(straight);
+    expect(
+      confirmedYawRadps({ ...disagree, verticalGyroRadps: glitch * 4, phoneHandheld: false }),
+    ).toBeCloseTo(straight);
+    expect(
+      confirmedYawRadps({
+        dtSec: 1,
+        chipFromDeg: 0,
+        chipToDeg: 26,
+        pathFromDeg: null,
+        pathToDeg: null,
+        verticalGyroRadps: null,
+        phoneHandheld: false,
+      }),
+    ).toBeNull();
+    expect(
+      confirmedYawRadps({
+        dtSec: 1,
+        chipFromDeg: 0,
+        chipToDeg: 26,
+        pathFromDeg: null,
+        pathToDeg: null,
+        verticalGyroRadps: turn,
+        phoneHandheld: false,
+      }),
+    ).toBeCloseTo(turn);
   });
 });

@@ -225,11 +225,13 @@ class TripAnalyzer(
     }
 
     var previous: LocationSample? = null
+    var previousIndex = -1
     for (i in location.size - 2 downTo 0) {
       val candidate = location[i]
       val dt = current.t - candidate.t
       if (dt >= config.gpsAccelWindowMs * 0.6 && locationUsable(candidate, config)) {
         previous = candidate
+        previousIndex = i
         break
       }
       if (dt > GPS_ACCEL_MAX_DT_SEC * 1000.0) {
@@ -250,12 +252,19 @@ class TripAnalyzer(
     }
 
     val longitudinal = (currentSpeed - prevSpeed) / dtSec
+    val before = if (previousIndex > 0) location[previousIndex - 1] else null
+    val omega = confirmedYawRadps(
+      dtSec = dtSec,
+      chipFromDeg = prev.courseDeg,
+      chipToDeg = current.courseDeg,
+      pathFromDeg = pathBearingDeg(before, prev),
+      pathToDeg = pathBearingDeg(prev, current),
+      verticalGyroRadps = meanVerticalGyro(prev.t, current.t),
+      phoneHandheld = openHandheld != null,
+    )
     var lateral: Double? = null
     var yaw: Double? = null
-    val currentCourse = current.courseDeg
-    val previousCourse = prev.courseDeg
-    if (currentCourse != null && previousCourse != null) {
-      val omega = toRad(unwrapDeltaDeg(previousCourse, currentCourse)) / dtSec
+    if (omega != null) {
       val speed = (currentSpeed + prevSpeed) / 2.0
       lateral = speed * omega
       if (prevSpeed >= config.minSpeedMps && currentSpeed >= config.minSpeedMps) {
@@ -263,6 +272,24 @@ class TripAnalyzer(
       }
     }
     return GpsAccel(longitudinal, lateral, yaw)
+  }
+
+  private fun meanVerticalGyro(fromT: Double, toT: Double): Double? {
+    var sum = 0.0
+    var count = 0
+    for (i in imu.indices.reversed()) {
+      val sample = imu[i]
+      if (sample.t > toT) {
+        continue
+      }
+      if (sample.t < fromT) {
+        break
+      }
+      val yaw = verticalGyroRadps(sample.gyro, sample.gravity) ?: continue
+      sum += yaw
+      count += 1
+    }
+    return if (count == 0) null else sum / count
   }
 
   private fun currentSpeed(): Double? = lastGoodLocation?.speedMps

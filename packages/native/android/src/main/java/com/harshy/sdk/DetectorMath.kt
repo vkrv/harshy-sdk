@@ -78,6 +78,90 @@ internal fun derivedSpeedMps(
 internal const val DERIVED_COURSE_MIN_M = 2.0
 internal const val GPS_ACCEL_MIN_DT_SEC = 0.2
 internal const val GPS_ACCEL_MAX_DT_SEC = 8.0
+internal const val YAW_COURSE_DISAGREE_DEG = 45.0
+internal const val YAW_GYRO_CONFIRM_RATIO = 0.5
+internal const val YAW_GYRO_CONFIRM_MAX_RATIO = 2.5
+
+internal fun pathBearingDeg(
+  from: LocationSample?,
+  to: LocationSample,
+  minDistanceM: Double = DERIVED_COURSE_MIN_M,
+): Double? {
+  if (from == null || haversineM(from, to) < minDistanceM) {
+    return null
+  }
+  val y = sin(toRad(to.lon - from.lon)) * cos(toRad(to.lat))
+  val x = cos(toRad(from.lat)) * sin(toRad(to.lat)) -
+    sin(toRad(from.lat)) * cos(toRad(to.lat)) * cos(toRad(to.lon - from.lon))
+  val deg = toDeg(atan2(y, x))
+  return if (deg.isFinite()) wrapCourseDeg(deg) else null
+}
+
+internal fun verticalGyroRadps(gyro: Vec3?, gravity: Vec3?): Double? {
+  if (gyro == null || gravity == null) {
+    return null
+  }
+  val g = hypot(gravity.x, hypot(gravity.y, gravity.z))
+  if (g < 0.5) {
+    return null
+  }
+  val about = (gyro.x * gravity.x + gyro.y * gravity.y + gyro.z * gravity.z) / g
+  return if (about.isFinite()) about else null
+}
+
+internal fun confirmedYawRadps(
+  dtSec: Double,
+  chipFromDeg: Double?,
+  chipToDeg: Double?,
+  pathFromDeg: Double?,
+  pathToDeg: Double?,
+  verticalGyroRadps: Double?,
+  phoneHandheld: Boolean,
+): Double? {
+  if (!dtSec.isFinite() || dtSec <= 0.0) {
+    return null
+  }
+  val chipDelta = if (chipFromDeg != null && chipToDeg != null && chipFromDeg.isFinite() && chipToDeg.isFinite()) {
+    unwrapDeltaDeg(chipFromDeg, chipToDeg)
+  } else {
+    null
+  }
+  val pathDelta = if (pathFromDeg != null && pathToDeg != null && pathFromDeg.isFinite() && pathToDeg.isFinite()) {
+    unwrapDeltaDeg(pathFromDeg, pathToDeg)
+  } else {
+    null
+  }
+  val chipOmega = chipDelta?.let { toRad(it) / dtSec }
+  val pathOmega = pathDelta?.let { toRad(it) / dtSec }
+  if (pathOmega != null && chipOmega != null && chipDelta != null && pathDelta != null) {
+    if (kotlin.math.abs(chipDelta - pathDelta) <= YAW_COURSE_DISAGREE_DEG) {
+      return pathOmega
+    }
+    if (gyroConfirmsChipYaw(chipOmega, verticalGyroRadps, phoneHandheld)) {
+      return chipOmega
+    }
+    return pathOmega
+  }
+  if (pathOmega != null) {
+    return pathOmega
+  }
+  if (chipOmega != null && gyroConfirmsChipYaw(chipOmega, verticalGyroRadps, phoneHandheld)) {
+    return chipOmega
+  }
+  return null
+}
+
+private fun gyroConfirmsChipYaw(chipOmega: Double, gyro: Double?, phoneHandheld: Boolean): Boolean {
+  if (phoneHandheld || gyro == null || !gyro.isFinite()) {
+    return false
+  }
+  val chip = kotlin.math.abs(chipOmega)
+  val spin = kotlin.math.abs(gyro)
+  if (chip < 1e-6) {
+    return spin < 0.05
+  }
+  return spin >= chip * YAW_GYRO_CONFIRM_RATIO && spin <= chip * YAW_GYRO_CONFIRM_MAX_RATIO
+}
 
 internal fun derivedCourseDeg(
   from: LocationSample?,
@@ -96,14 +180,7 @@ internal fun derivedCourseDeg(
   if (!dtSec.isFinite() || dtSec < 0.05 || dtSec > maxDtSec) {
     return null
   }
-  if (haversineM(from, to) < minDistanceM) {
-    return null
-  }
-  val y = sin(toRad(to.lon - from.lon)) * cos(toRad(to.lat))
-  val x = cos(toRad(from.lat)) * sin(toRad(to.lat)) -
-    sin(toRad(from.lat)) * cos(toRad(to.lat)) * cos(toRad(to.lon - from.lon))
-  val deg = toDeg(atan2(y, x))
-  return if (deg.isFinite()) wrapCourseDeg(deg) else null
+  return pathBearingDeg(from, to, minDistanceM)
 }
 
 internal fun isCoarseNetworkLikeFix(sample: LocationSample): Boolean {

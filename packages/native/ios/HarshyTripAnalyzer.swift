@@ -213,12 +213,14 @@ public final class HarshyTripAnalyzer {
       return (nil, nil, nil)
     }
     var previous: HarshyLocationSample?
+    var previousIndex = -1
     if location.count >= 2 {
       for i in stride(from: location.count - 2, through: 0, by: -1) {
         let candidate = location[i]
         let dt = current.t - candidate.t
         if dt >= config.gpsAccelWindowMs * 0.6 && locationUsable(candidate) {
           previous = candidate
+          previousIndex = i
           break
         }
         if dt > harshyGpsAccelMaxDtSec * 1000 { break }
@@ -232,10 +234,21 @@ public final class HarshyTripAnalyzer {
       return (nil, nil, nil)
     }
     let longitudinal = (currentSpeed - prevSpeed) / dtSec
+    let pathFromDeg: Double? = previousIndex > 0
+      ? harshyPathBearingDeg(from: location[previousIndex - 1], to: previous)
+      : nil
+    let omega = harshyConfirmedYawRadps(
+      dtSec: dtSec,
+      chipFromDeg: previous.courseDeg,
+      chipToDeg: current.courseDeg,
+      pathFromDeg: pathFromDeg,
+      pathToDeg: harshyPathBearingDeg(from: previous, to: current),
+      verticalGyroRadps: meanVerticalGyro(fromT: previous.t, toT: current.t),
+      phoneHandheld: openHandheld != nil
+    )
     var lateral: Double?
     var yaw: Double?
-    if let currentCourse = current.courseDeg, let previousCourse = previous.courseDeg {
-      let omega = harshyToRad(harshyUnwrapDeltaDeg(fromDeg: previousCourse, toDeg: currentCourse)) / dtSec
+    if let omega {
       let speed = (currentSpeed + prevSpeed) / 2
       lateral = speed * omega
       if prevSpeed >= config.minSpeedMps && currentSpeed >= config.minSpeedMps {
@@ -243,6 +256,19 @@ public final class HarshyTripAnalyzer {
       }
     }
     return (longitudinal, lateral, yaw)
+  }
+
+  private func meanVerticalGyro(fromT: Double, toT: Double) -> Double? {
+    var sum = 0.0
+    var count = 0
+    for sample in imu.reversed() {
+      if sample.t > toT { continue }
+      if sample.t < fromT { break }
+      guard let yaw = harshyVerticalGyroRadps(gyro: sample.gyro, gravity: sample.gravity) else { continue }
+      sum += yaw
+      count += 1
+    }
+    return count == 0 ? nil : sum / Double(count)
   }
 
   private func currentSpeed() -> Double? { lastGoodLocation?.speedMps }

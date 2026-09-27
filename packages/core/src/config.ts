@@ -30,8 +30,48 @@ import type { DetectorConfig, NativeStartOptions } from "./types.js";
 /** Event penalties and smooth credits apply at 1/2. */
 export const SCORE_PENALTY_X = 1 / 2;
 
-/** A smooth trip can rise above 100, and stops here. */
-export const SCORE_MAX = 120;
+/** The ledger cannot rise above this. */
+export const SCORE_MAX = 100;
+
+/**
+ * How strongly trip length scales the relative grade.
+ * At `refDistanceKm` the weight is 1. Shorter trips raise it (harsh hits harder);
+ * longer trips lower it. Floored by `minDistanceKm` so a 200 m start does not explode.
+ */
+export const SCORE_RELATIVE_EXPOSURE_MIN = 0.5;
+export const SCORE_RELATIVE_EXPOSURE_MAX = 2.5;
+
+export type RelativeScoreOptions = {
+  refDistanceKm?: number;
+  minDistanceKm?: number;
+};
+
+/** Weight applied to absolute points when building the 0–100 grade. 1 at the reference km. */
+export function relativeScoreWeight(
+  distanceM: number,
+  options: RelativeScoreOptions = {},
+): number {
+  const refKm = options.refDistanceKm ?? 5;
+  const minKm = options.minDistanceKm ?? 2;
+  const km = Math.max(distanceM / 1000, minKm);
+  const exposure = km / Math.max(refKm, 1e-6);
+  const weight = 1 / Math.max(exposure, 1e-6);
+  return Math.min(SCORE_RELATIVE_EXPOSURE_MAX, Math.max(SCORE_RELATIVE_EXPOSURE_MIN, weight));
+}
+
+/**
+ * Relative 0–100 grade from the absolute ledger and trip length.
+ * 0 points → 100. Negatives hurt more on short trips than on long ones (same points).
+ * Smooth / positive ledgers still clamp at 100.
+ */
+export function relativeScore(
+  points: number,
+  distanceM = 0,
+  options: RelativeScoreOptions = {},
+): number {
+  const weighted = points * relativeScoreWeight(distanceM, options);
+  return Math.min(SCORE_MAX, Math.max(0, 100 + weighted));
+}
 
 /**
  * How far distance may stretch one event's weight.

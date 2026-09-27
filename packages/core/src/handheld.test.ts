@@ -112,7 +112,7 @@ describe("phone_handheld", () => {
         distanceM: session.metrics.distanceM,
         durationMs: session.metrics.durationMs,
       }),
-    ).toBe(100);
+    ).toBe(0);
   });
 
   it("does not emit while stopped", () => {

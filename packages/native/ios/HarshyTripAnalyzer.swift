@@ -36,6 +36,8 @@ public final class HarshyTripAnalyzer {
   private var heldSpeedLeap: HarshyLocationSample?
   private var smoothHold: [String: SmoothHold] = [:]
   private var smoothCreditAtM: [String: Double] = [:]
+  private var spoiledKm = Set<Int>()
+  private var awardedKm = 0
 
   public init(
     config: HarshyDetectorConfig?,
@@ -189,6 +191,7 @@ public final class HarshyTripAnalyzer {
         lastEventAt[type] = t
         lastEventLevel[type] = level
         harshyTagCompoundOverlaps(events: events, incoming: existing, now: t, windowMs: config.compoundWindowMs)
+        noteHarshKilometre(type)
         return existing
       }
     }
@@ -207,7 +210,16 @@ public final class HarshyTripAnalyzer {
     lastEventAt[type] = t
     lastEventLevel[type] = level
     harshyTagCompoundOverlaps(events: events, incoming: event, now: t, windowMs: config.compoundWindowMs)
+    noteHarshKilometre(type)
     return event
+  }
+
+  private func noteHarshKilometre(_ type: String) {
+    if type != harshyEventHarshAccel && type != harshyEventHarshBrake && type != harshyEventHarshCorner &&
+      type != harshyEventSwerve && type != harshyEventJerk {
+      return
+    }
+    spoiledKm.insert(Int(floor(distanceM / 1000)))
   }
 
   private func gpsWindowAccel() -> (longitudinal: Double?, lateral: Double?, yawRateRadps: Double?) {
@@ -415,6 +427,7 @@ public final class HarshyTripAnalyzer {
     }
     if includeSmooth {
       emitted.append(contentsOf: updateSmoothCredits(t: t, moving: moving, loc: loc, speed: speed))
+      emitted.append(contentsOf: awardCleanKilometres(t: t, loc: loc, speed: speed))
     }
     return emitted
   }
@@ -495,6 +508,37 @@ public final class HarshyTripAnalyzer {
     return emitted
   }
 
+  private func awardCleanKilometres(
+    t: Double,
+    loc: HarshyLocationSample?,
+    speed: Double?
+  ) -> [HarshyDrivingEvent] {
+    var emitted: [HarshyDrivingEvent] = []
+    while distanceM >= Double(awardedKm + 1) * 1000 {
+      let index = awardedKm
+      awardedKm += 1
+      if spoiledKm.contains(index) {
+        continue
+      }
+      let kmNumber = index + 1
+      let points = kmNumber <= 10 ? 4.0 : 3.0
+      let event = HarshyDrivingEvent(
+        id: "smooth_km-\(kmNumber)",
+        type: harshyEventSmoothKm,
+        t: t,
+        peak: points,
+        severity: 0,
+        level: "light",
+        lat: loc?.lat,
+        lon: loc?.lon,
+        speedMps: speed
+      )
+      events.append(event)
+      emitted.append(event)
+    }
+    return emitted
+  }
+
   private func buildMetrics(_ t: Double) -> HarshyLiveMetrics {
     let durationMs = max(0, t - startedAtMs)
     let speedMps = currentSpeed()
@@ -507,6 +551,7 @@ public final class HarshyTripAnalyzer {
       config: config
     )
     let last = lastImu
+    let points = harshyScoreEvents(events, config: config, distanceM: distanceM, durationMs: durationMs)
     return HarshyLiveMetrics(
       t: t,
       speedMps: speedMps,
@@ -526,7 +571,13 @@ public final class HarshyTripAnalyzer {
       swerveLevel: levels.swerveLevel,
       distanceM: distanceM,
       durationMs: durationMs,
-      score: harshyScoreEvents(events, config: config, distanceM: distanceM, durationMs: durationMs)
+      points: points,
+      score: harshyRelativeScore(
+        points,
+        distanceM: distanceM,
+        refDistanceKm: config.score.refDistanceKm,
+        minDistanceKm: config.score.minDistanceKm
+      )
     )
   }
 
@@ -663,12 +714,19 @@ public final class HarshyTripAnalyzer {
 
   private func summarizeTrip(_ endedAtMs: Double) -> HarshyTripMetrics {
     let durationMs = max(0, endedAtMs - startedAtMs)
+    let points = harshyScoreEvents(events, config: config, distanceM: distanceM, durationMs: durationMs)
     return HarshyTripMetrics(
       distanceM: distanceM,
       durationMs: durationMs,
       maxSpeedMps: maxSpeedMps,
       avgSpeedMps: speedCount == 0 ? nil : speedSum / Double(speedCount),
-      score: harshyScoreEvents(events, config: config, distanceM: distanceM, durationMs: durationMs),
+      points: points,
+      score: harshyRelativeScore(
+        points,
+        distanceM: distanceM,
+        refDistanceKm: config.score.refDistanceKm,
+        minDistanceKm: config.score.minDistanceKm
+      ),
       eventCounts: harshyEventCounts(events)
     )
   }
@@ -696,21 +754,33 @@ public func harshyScoreExposureScale(
 
 public func harshyEventScorePoints(
   _ event: HarshyDrivingEvent,
-  config: HarshyDetectorConfig,
-  distanceM: Double
+  config _: HarshyDetectorConfig,
+  distanceM _: Double
 ) -> Double {
-  let scale = harshyScoreExposureScale(distanceM: distanceM, durationMs: 0, config: config)
-  let weight = harshyEventWeight(event.type, config: config)
-  if event.type == harshyEventSmoothAccel || event.type == harshyEventSmoothBrake || event.type == harshyEventSmoothCorner {
-    return weight * scale * harshyScorePenaltyX
+  switch event.type {
+  case harshyEventSmoothKm:
+    return event.peak >= 3.5 ? 4 : 3
+  case harshyEventSmoothAccel, harshyEventSmoothBrake, harshyEventSmoothCorner:
+    return 2
+  case harshyEventHarshAccel:
+    return harshyBandPoints(event.level, light: -6, medium: -9, heavy: -12)
+  case harshyEventHarshBrake:
+    return harshyBandPoints(event.level, light: -8, medium: -12, heavy: -16)
+  case harshyEventHarshCorner:
+    return harshyBandPoints(event.level, light: -6, medium: -9, heavy: -12)
+  case harshyEventSwerve:
+    return harshyBandPoints(event.level, light: -5, medium: -8, heavy: -10)
+  case harshyEventJerk:
+    return harshyBandPoints(event.level, light: -3, medium: -5, heavy: -6)
+  default:
+    return 0
   }
-  let severity = event.severity.isFinite ? min(1, max(0, event.severity)) : 0
-  var raw = weight * (0.4 + 0.6 * severity)
-  if !event.overlaps.isEmpty {
-    raw += config.score.compound
-  }
-  let points = -(raw * scale * harshyScorePenaltyX)
-  return points == 0 ? 0 : points
+}
+
+private func harshyBandPoints(_ level: String, light: Double, medium: Double, heavy: Double) -> Double {
+  if level == "heavy" { return heavy }
+  if level == "medium" { return medium }
+  return light
 }
 
 public func harshyScoreEvents(
@@ -720,11 +790,11 @@ public func harshyScoreEvents(
   durationMs: Double
 ) -> Double {
   _ = durationMs
-  var delta = 0.0
+  var sum = 0.0
   for event in events {
-    delta += harshyEventScorePoints(event, config: config, distanceM: distanceM)
+    sum += harshyEventScorePoints(event, config: config, distanceM: distanceM)
   }
-  return harshyClamp(config.score.start + delta, 0, harshyScoreMax)
+  return min(sum, harshyScoreMax)
 }
 
 public func harshyEventCounts(_ events: [HarshyDrivingEvent]) -> [String: Int] {

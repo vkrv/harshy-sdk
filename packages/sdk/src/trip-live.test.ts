@@ -23,6 +23,7 @@ const base: LiveMetrics = {
   distanceM: 3200,
   durationMs: 65_000,
   score: 97.4,
+  points: -2.6,
 };
 
 describe("formatTripLiveDisplay", () => {

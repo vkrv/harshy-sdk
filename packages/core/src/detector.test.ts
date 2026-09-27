@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_DETECTOR_CONFIG, SCORE_MAX, SCORE_PENALTY_X } from "./config.js";
+import { DEFAULT_DETECTOR_CONFIG, SCORE_MAX, relativeScore } from "./config.js";
 import { analyzeTrip, createTripAnalyzer, eventScorePoints, scoreEvents } from "./detector.js";
 import { generateSampleTrip } from "./simulate.js";
 import type { DrivingEvent, ImuSample, LocationSample } from "./types.js";
@@ -179,7 +179,7 @@ describe("detector", () => {
     });
 
     expect(strict.events.length).toBeGreaterThan(loose.events.length);
-    expect(strict.metrics.score).toBeLessThan(loose.metrics.score);
+    expect(strict.metrics.score).toBeLessThanOrEqual(loose.metrics.score);
   });
 
   it("emits speeding spans that open and close around the cap", () => {
@@ -336,76 +336,72 @@ describe("detector", () => {
       DEFAULT_DETECTOR_CONFIG,
       { distanceM: 2_000, durationMs: 5 * 60_000 },
     );
-    expect(tagged).toBeLessThan(plain);
+    expect(tagged).toBe(plain);
   });
 
-  it("takes away half of the event weight at the reference distance", () => {
-    const score = scoreEvents([brake], DEFAULT_DETECTOR_CONFIG, {
-      distanceM: 5_000,
-      durationMs: 10 * 60_000,
-    });
-    expect(SCORE_PENALTY_X).toBe(1 / 2);
-    expect(score).toBeCloseTo(100 - DEFAULT_DETECTOR_CONFIG.score.harshBrake * SCORE_PENALTY_X);
+  it("maps the absolute ledger to a relative 0–100 score by trip length", () => {
+    expect(relativeScore(0)).toBe(100);
+    expect(relativeScore(4)).toBe(100);
+    // Reference distance (5 km): weight 1 → same as 100 + points.
+    expect(relativeScore(-16, 5_000)).toBe(84);
+    // Shorter trip (floored at min 2 km): weight 2.5 → harsher.
+    expect(relativeScore(-16, 500)).toBe(60);
+    expect(relativeScore(-16, 2_000)).toBe(60);
+    // Longer trip: weight 0.5 floor → softer.
+    expect(relativeScore(-16, 50_000)).toBe(92);
+    expect(relativeScore(-100, 5_000)).toBe(0);
+    expect(relativeScore(-200, 5_000)).toBe(0);
   });
 
-  it("reports each event's points at the trip distance", () => {
-    expect(eventScorePoints(brake, DEFAULT_DETECTOR_CONFIG, 5_000)).toBeCloseTo(
-      -DEFAULT_DETECTOR_CONFIG.score.harshBrake * SCORE_PENALTY_X,
+  it("charges a heavy brake 16 points and can go negative", () => {
+    expect(eventScorePoints(brake, DEFAULT_DETECTOR_CONFIG, 5_000)).toBe(-16);
+    expect(
+      scoreEvents([brake], DEFAULT_DETECTOR_CONFIG, { distanceM: 5_000, durationMs: 10 * 60_000 }),
+    ).toBe(-16);
+  });
+
+  it("uses a fixed amount for each event", () => {
+    expect(eventScorePoints({ ...brake, level: "light" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-8);
+    expect(eventScorePoints({ ...brake, level: "medium" }, DEFAULT_DETECTOR_CONFIG, 40_000)).toBe(-12);
+    expect(eventScorePoints(brake, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(
+      eventScorePoints(brake, DEFAULT_DETECTOR_CONFIG, 40_000),
     );
     expect(
       eventScorePoints({ ...brake, type: "possible_impact", overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
     ).toBe(0);
     expect(
+      eventScorePoints({ ...brake, type: "speeding", overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
+    ).toBe(0);
+    expect(
       eventScorePoints({ ...brake, overlaps: ["harsh_corner"] }, DEFAULT_DETECTOR_CONFIG, 5_000),
-    ).toBeCloseTo(
-      -(DEFAULT_DETECTOR_CONFIG.score.harshBrake + DEFAULT_DETECTOR_CONFIG.score.compound) *
-        SCORE_PENALTY_X,
-    );
+    ).toBe(-16);
     expect(
       eventScorePoints({ ...brake, type: "smooth_accel", overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
-    ).toBeCloseTo(DEFAULT_DETECTOR_CONFIG.score.smoothAccel * SCORE_PENALTY_X);
+    ).toBe(2);
+    expect(
+      eventScorePoints({ ...brake, type: "smooth_km", peak: 4, overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
+    ).toBe(4);
+    expect(
+      eventScorePoints({ ...brake, type: "smooth_km", peak: 3, overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
+    ).toBe(3);
   });
 
-  it("gives a perfect score when there are no events, regardless of trip length", () => {
+  it("starts at zero when there are no events", () => {
     expect(
       scoreEvents([], DEFAULT_DETECTOR_CONFIG, { distanceM: 0, durationMs: 0 }),
-    ).toBe(100);
+    ).toBe(0);
     expect(
       scoreEvents([], DEFAULT_DETECTOR_CONFIG, { distanceM: 50_000, durationMs: 3_600_000 }),
-    ).toBe(100);
+    ).toBe(0);
   });
 
-  it("penalizes the same events less on a farther trip", () => {
-    const events = [brake, brake];
-    const short = scoreEvents(events, DEFAULT_DETECTOR_CONFIG, {
-      distanceM: 2_000,
-      durationMs: 5 * 60_000,
-    });
-    const long = scoreEvents(events, DEFAULT_DETECTOR_CONFIG, {
-      distanceM: 40_000,
-      durationMs: 40 * 60_000,
-    });
-    expect(short).toBeLessThan(100);
-    expect(long).toBeGreaterThan(short);
-    expect(long).toBeLessThanOrEqual(100);
-    const refDrop = 100 - scoreEvents(events, DEFAULT_DETECTOR_CONFIG, {
-      distanceM: 5_000,
-      durationMs: 10 * 60_000,
-    });
-    const farDrop = 100 - long;
-    expect(farDrop).toBeGreaterThan(refDrop * 0.55);
-  });
-
-  it("adds a flat smooth credit and will not climb past the cap", () => {
-    const smooth: DrivingEvent = { ...brake, type: "smooth_accel", severity: 0, overlaps: [] };
-    const one = scoreEvents([smooth], DEFAULT_DETECTOR_CONFIG, {
-      distanceM: 5_000,
-      durationMs: 10 * 60_000,
-    });
-    expect(one).toBeCloseTo(100 + DEFAULT_DETECTOR_CONFIG.score.smoothAccel * SCORE_PENALTY_X);
-    expect(one).toBeGreaterThan(100);
+  it("adds gentle credits and will not climb past 100", () => {
+    const smooth: DrivingEvent = { ...brake, type: "smooth_accel", severity: 0, level: "light", overlaps: [] };
+    expect(
+      scoreEvents([smooth], DEFAULT_DETECTOR_CONFIG, { distanceM: 5_000, durationMs: 10 * 60_000 }),
+    ).toBe(2);
     const pile = scoreEvents(
-      Array.from({ length: 40 }, () => smooth),
+      Array.from({ length: 80 }, () => smooth),
       DEFAULT_DETECTOR_CONFIG,
       { distanceM: 5_000, durationMs: 10 * 60_000 },
     );
@@ -429,7 +425,31 @@ describe("detector", () => {
       analyzer.pushLocation(loc(step * 1000, 10 + step));
     }
     expect(analyzer.getEvents().filter((event) => event.type === "smooth_accel")).toHaveLength(1);
-    expect(analyzer.getMetrics().score).toBeGreaterThan(100);
+    expect(analyzer.getMetrics().points).toBe(2);
+    expect(analyzer.getMetrics().score).toBe(100);
+  });
+
+  it("pays 4 points when the first kilometre finishes clean", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "clean-km",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    let lat = 59.4;
+    let lon = 24.8;
+    analyzer.pushLocation(placed(0, 12, 0, lat, lon));
+    for (let step = 1; step <= 90; step += 1) {
+      const next = destination(lat, lon, 0, 12);
+      lat = next.lat;
+      lon = next.lon;
+      analyzer.pushLocation(placed(step * 1000, 12, 0, lat, lon));
+    }
+    const kilometres = analyzer.getEvents().filter((event) => event.type === "smooth_km");
+    expect(kilometres).toHaveLength(1);
+    expect(kilometres[0]?.peak).toBe(4);
+    expect(analyzer.getMetrics().points).toBe(4);
+    expect(analyzer.getMetrics().score).toBe(100);
+    expect(analyzer.getEvents().some((event) => event.type.startsWith("harsh_"))).toBe(false);
   });
 
   it("drops a gentle-accel hold when the pull gets harsh", () => {
@@ -448,8 +468,8 @@ describe("detector", () => {
     expect(analyzer.getEvents().some((event) => event.type === "smooth_accel")).toBe(false);
   });
 
-  it("ignores duration when scaling penalties", () => {
-    const events = [brake];
+  it("ignores distance and duration when scoring the same events", () => {
+    const events = [brake, { ...brake, id: "km", type: "smooth_km" as const, peak: 4, level: "light" as const }];
     const farQuick = scoreEvents(events, DEFAULT_DETECTOR_CONFIG, {
       distanceM: 40_000,
       durationMs: 5 * 60_000,
@@ -462,8 +482,9 @@ describe("detector", () => {
       distanceM: 40_000,
       durationMs: 40 * 60_000,
     });
-    expect(farSlow).toBeCloseTo(farQuick);
-    expect(nearSlow).toBeLessThan(farSlow);
+    expect(farQuick).toBe(-12);
+    expect(nearSlow).toBe(farQuick);
+    expect(farSlow).toBe(farQuick);
   });
 
   it("tags live accel, brake, and corner as within norm or a harsh band", () => {

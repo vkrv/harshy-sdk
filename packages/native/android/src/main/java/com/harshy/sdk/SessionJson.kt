@@ -153,6 +153,7 @@ private fun TripMetrics.toJsonObject(): JSONObject {
     .put("durationMs", durationMs)
     .put("maxSpeedMps", maxSpeedMps ?: JSONObject.NULL)
     .put("avgSpeedMps", avgSpeedMps ?: JSONObject.NULL)
+    .put("points", points)
     .put("score", score)
     .put("eventCounts", counts)
 }

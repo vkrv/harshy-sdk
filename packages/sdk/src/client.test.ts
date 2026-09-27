@@ -150,7 +150,8 @@ describe("Harshy SDK", () => {
       harshCornerMps2: 1,
     });
 
-    expect(strict?.events.length ?? 0).toBeGreaterThan(loose?.events.length ?? 0);
+    expect(strict?.events.some((event) => event.type.startsWith("harsh_"))).toBe(true);
+    expect(loose?.events.some((event) => event.type.startsWith("harsh_"))).toBe(false);
   });
 
   it("uploads through a later-configured adapter", async () => {

@@ -1,7 +1,31 @@
 import Foundation
 
 public let harshyScorePenaltyX = 1.0 / 2.0
-public let harshyScoreMax = 120.0
+public let harshyScoreMax = 100.0
+public let harshyScoreRelativeExposureMin = 0.5
+public let harshyScoreRelativeExposureMax = 2.5
+
+public func harshyRelativeScoreWeight(
+  _ distanceM: Double,
+  refDistanceKm: Double = 5,
+  minDistanceKm: Double = 2
+) -> Double {
+  let km = max(distanceM / 1000, minDistanceKm)
+  let exposure = km / max(refDistanceKm, 1e-6)
+  let weight = 1 / max(exposure, 1e-6)
+  return min(harshyScoreRelativeExposureMax, max(harshyScoreRelativeExposureMin, weight))
+}
+
+/** Relative 0–100 grade from the absolute ledger and trip length. */
+public func harshyRelativeScore(
+  _ points: Double,
+  distanceM: Double = 0,
+  refDistanceKm: Double = 5,
+  minDistanceKm: Double = 2
+) -> Double {
+  let weighted = points * harshyRelativeScoreWeight(distanceM, refDistanceKm: refDistanceKm, minDistanceKm: minDistanceKm)
+  return min(harshyScoreMax, max(0, 100 + weighted))
+}
 public let harshyScoreExposureMin = 0.6
 public let harshyScoreExposureMax = 1.6
 public let harshySmoothFloorMps2 = 0.5

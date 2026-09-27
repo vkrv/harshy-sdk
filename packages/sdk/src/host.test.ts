@@ -170,6 +170,7 @@ describe("SDK host surface", () => {
     expect(impact?.type).toBe(POSSIBLE_IMPACT_TYPE);
     expect(impact?.impactDirection).toBe("front");
     expect(impactDirectionLabel(impact?.impactDirection)).toBe("Front");
+    expect(session.metrics.points).toBe(0);
     expect(session.metrics.score).toBe(100);
     expect(session.metrics.eventCounts.possible_impact).toBe(1);
     expect(seen.some(isPossibleImpact)).toBe(true);
@@ -195,6 +196,7 @@ describe("SDK host surface", () => {
     });
     const impact = session.events.find(isPossibleImpact);
     expect(impact?.impactDirection).toBe("rear");
+    expect(session.metrics.points).toBe(0);
     expect(session.metrics.score).toBe(100);
   });
 

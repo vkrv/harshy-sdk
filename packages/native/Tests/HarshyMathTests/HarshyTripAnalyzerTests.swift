@@ -107,6 +107,7 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     let event = session.events.first { $0.type == harshyPossibleImpactType }
     XCTAssertEqual(event?.impactDirection, "front")
     XCTAssertEqual(session.metrics.eventCounts[harshyPossibleImpactType], 1)
+    XCTAssertEqual(session.metrics.points, 0, accuracy: 0.001)
     XCTAssertEqual(session.metrics.score, 100, accuracy: 0.001)
   }
 
@@ -249,6 +250,7 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertTrue(harshyIsPhoneHandheld(event!))
     XCTAssertNotNil(event?.endT)
     XCTAssertEqual(session.metrics.eventCounts[harshyPhoneHandheldType], 1)
+    XCTAssertEqual(session.metrics.points, 0, accuracy: 0.001)
     XCTAssertEqual(session.metrics.score, 100, accuracy: 0.001)
   }
 
@@ -407,7 +409,7 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     }
     let session = analyzer.finalize(endedAtMs: 7000)
     XCTAssertEqual(session.events.filter { $0.type == harshyEventSmoothAccel }.count, 1)
-    XCTAssertGreaterThan(session.metrics.score, 100)
-    XCTAssertLessThanOrEqual(session.metrics.score, harshyScoreMax)
+    XCTAssertEqual(session.metrics.points, 2, accuracy: 0.001)
+    XCTAssertEqual(session.metrics.score, 100, accuracy: 0.001)
   }
 }

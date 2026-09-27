@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { DEFAULT_DETECTOR_CONFIG, mergeDetectorConfig } from "./config.js";
+import { DEFAULT_DETECTOR_CONFIG, mergeDetectorConfig, relativeScore } from "./config.js";
 import { DEFAULT_HARSH_HEAVY_X, DEFAULT_HARSH_MEDIUM_X } from "./harsh.js";
 import type { DetectorConfig, SessionExport } from "./types.js";
 
@@ -51,6 +51,7 @@ export const drivingEventTypeSchema = z.enum([
   "smooth_accel",
   "smooth_brake",
   "smooth_corner",
+  "smooth_km",
 ]);
 
 export const impactDirectionSchema = z.enum(["front", "rear", "rollover", "unknown"]);
@@ -155,26 +156,38 @@ export const sessionExportSchema = z.object({
   location: z.array(locationSampleSchema),
   imu: z.array(imuSampleSchema),
   events: z.array(drivingEventSchema),
-  metrics: z.object({
-    distanceM: z.number().nonnegative(),
-    durationMs: z.number().nonnegative(),
-    maxSpeedMps: z.number().nullable(),
-    avgSpeedMps: z.number().nullable(),
-    score: z.number(),
-    eventCounts: z.object({
-      harsh_accel: z.number().int().nonnegative(),
-      harsh_brake: z.number().int().nonnegative(),
-      harsh_corner: z.number().int().nonnegative(),
-      swerve: z.number().int().nonnegative().default(0),
-      speeding: z.number().int().nonnegative(),
-      jerk: z.number().int().nonnegative(),
-      possible_impact: z.number().int().nonnegative().default(0),
-      phone_handheld: z.number().int().nonnegative().default(0),
-      smooth_accel: z.number().int().nonnegative().default(0),
-      smooth_brake: z.number().int().nonnegative().default(0),
-      smooth_corner: z.number().int().nonnegative().default(0),
+  metrics: z
+    .object({
+      distanceM: z.number().nonnegative(),
+      durationMs: z.number().nonnegative(),
+      maxSpeedMps: z.number().nullable(),
+      avgSpeedMps: z.number().nullable(),
+      score: z.number(),
+      /** Absolute ledger. Absent on older JSON where `score` held the ledger. */
+      points: z.number().optional(),
+      eventCounts: z.object({
+        harsh_accel: z.number().int().nonnegative(),
+        harsh_brake: z.number().int().nonnegative(),
+        harsh_corner: z.number().int().nonnegative(),
+        swerve: z.number().int().nonnegative().default(0),
+        speeding: z.number().int().nonnegative(),
+        jerk: z.number().int().nonnegative(),
+        possible_impact: z.number().int().nonnegative().default(0),
+        phone_handheld: z.number().int().nonnegative().default(0),
+        smooth_accel: z.number().int().nonnegative().default(0),
+        smooth_brake: z.number().int().nonnegative().default(0),
+        smooth_corner: z.number().int().nonnegative().default(0),
+        smooth_km: z.number().int().nonnegative().default(0),
+      }),
+    })
+    .transform((metrics) => {
+      const points = metrics.points ?? metrics.score;
+      return {
+        ...metrics,
+        points,
+        score: relativeScore(points, metrics.distanceM),
+      };
     }),
-  }),
   device: z.object({
     platform: z.enum(["ios", "android", "web", "unknown"]),
     model: z.string().nullable(),

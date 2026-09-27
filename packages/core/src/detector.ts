@@ -4,12 +4,12 @@ import {
   SCORE_EXPOSURE_MAX,
   SCORE_EXPOSURE_MIN,
   SCORE_MAX,
-  SCORE_PENALTY_X,
   SMOOTH_CEILING_X,
   SMOOTH_FLOOR_MPS2,
   SMOOTH_GAP_M,
   SMOOTH_HOLD_MIN_M,
   SMOOTH_HOLD_MS,
+  relativeScore,
 } from "./config.js";
 import {
   isSuspiciousSpeedLeap,
@@ -107,6 +107,10 @@ type AnalyzerState = {
   smoothHold: Partial<Record<SmoothDrivingEventType, SmoothHold>>;
   /** Trip distance when this type last earned a credit. */
   smoothCreditAtM: Partial<Record<SmoothDrivingEventType, number>>;
+  /** 0-based kilometre indexes that contain a harsh driving event. */
+  spoiledKm: Set<number>;
+  /** How many kilometre buckets have already been closed. */
+  awardedKm: number;
   openSpeeding: DrivingEvent | null;
   openHandheld: DrivingEvent | null;
   handheld: HandheldFilter;
@@ -138,7 +142,23 @@ function emptyCounts(): Record<DrivingEventType, number> {
     smooth_accel: 0,
     smooth_brake: 0,
     smooth_corner: 0,
+    smooth_km: 0,
   };
+}
+
+const KILOMETRE_SPOILERS = new Set<DrivingEventType>([
+  "harsh_accel",
+  "harsh_brake",
+  "harsh_corner",
+  "swerve",
+  "jerk",
+]);
+
+function noteHarshKilometre(state: AnalyzerState, type: DrivingEventType): void {
+  if (!KILOMETRE_SPOILERS.has(type)) {
+    return;
+  }
+  state.spoiledKm.add(Math.floor(state.distanceM / 1000));
 }
 
 function locationUsable(sample: LocationSample, config: DetectorConfig): boolean {
@@ -190,6 +210,7 @@ function maybeEmit(
       state.lastEventAt[type] = t;
       state.lastEventLevel[type] = level;
       tagCompoundOverlaps(state.events, existing, t, state.config.compoundWindowMs);
+      noteHarshKilometre(state, type);
       return existing;
     }
   }
@@ -211,6 +232,7 @@ function maybeEmit(
   state.lastEventAt[type] = t;
   state.lastEventLevel[type] = level;
   tagCompoundOverlaps(state.events, event, t, state.config.compoundWindowMs);
+  noteHarshKilometre(state, type);
   return event;
 }
 
@@ -486,8 +508,43 @@ function detectFromMotion(
 
   if (includeSmooth) {
     emitted.push(...updateSmoothCredits(state, t, moving, location, speed));
+    emitted.push(...awardCleanKilometres(state, t, location, speed));
   }
 
+  return emitted;
+}
+
+function awardCleanKilometres(
+  state: AnalyzerState,
+  t: number,
+  location: LocationSample | null,
+  speed: number | null,
+): DrivingEvent[] {
+  const emitted: DrivingEvent[] = [];
+  while (state.distanceM >= (state.awardedKm + 1) * 1000) {
+    const index = state.awardedKm;
+    state.awardedKm += 1;
+    if (state.spoiledKm.has(index)) {
+      continue;
+    }
+    const kmNumber = index + 1;
+    const points = kmNumber <= 10 ? 4 : 3;
+    const event: DrivingEvent = {
+      id: `smooth_km-${kmNumber}`,
+      type: "smooth_km",
+      t,
+      endT: null,
+      peak: points,
+      severity: 0,
+      level: "light",
+      lat: location?.lat ?? null,
+      lon: location?.lon ?? null,
+      speedMps: speed,
+      overlaps: [],
+    };
+    state.events.push(event);
+    emitted.push(event);
+  }
   return emitted;
 }
 
@@ -614,38 +671,11 @@ function buildMetrics(state: AnalyzerState, t: number): LiveMetrics {
     swerveLevel: levels.swerveLevel,
     distanceM: state.distanceM,
     durationMs,
-    score: scoreEvents(state.events, state.config, {
+    ...tripScoreFields(state.events, state.config, {
       distanceM: state.distanceM,
       durationMs,
     }),
   };
-}
-
-function eventWeight(type: DrivingEventType, config: DetectorConfig): number {
-  switch (type) {
-    case "harsh_accel":
-      return config.score.harshAccel;
-    case "harsh_brake":
-      return config.score.harshBrake;
-    case "harsh_corner":
-      return config.score.harshCorner;
-    case "swerve":
-      return config.score.swerve;
-    case "speeding":
-      return config.score.speeding;
-    case "jerk":
-      return config.score.jerk;
-    case "possible_impact":
-      return 0;
-    case "phone_handheld":
-      return 0;
-    case "smooth_accel":
-      return config.score.smoothAccel;
-    case "smooth_brake":
-      return config.score.smoothBrake;
-    case "smooth_corner":
-      return config.score.smoothCorner;
-  }
 }
 
 function emitPossibleImpact(
@@ -805,40 +835,86 @@ export function scoreExposureScale(
   return clamp(1 / Math.max(exposure, 1e-6), SCORE_EXPOSURE_MIN, SCORE_EXPOSURE_MAX);
 }
 
+/** Absolute event-point ledger. Capped at SCORE_MAX; may go negative. */
 export function scoreEvents(
   events: readonly DrivingEvent[],
   config: DetectorConfig,
   exposure: { distanceM: number; durationMs: number },
 ): number {
-  let delta = 0;
+  void config;
+  void exposure;
+  let sum = 0;
   for (const event of events) {
-    delta += eventScorePoints(event, config, exposure.distanceM);
+    sum += eventScorePoints(event, config, exposure.distanceM);
   }
-  return clamp(config.score.start + delta, 0, SCORE_MAX);
+  return Math.min(sum, SCORE_MAX);
+}
+
+export function tripScoreFields(
+  events: readonly DrivingEvent[],
+  config: DetectorConfig,
+  exposure: { distanceM: number; durationMs: number },
+): { points: number; score: number } {
+  const points = scoreEvents(events, config, exposure);
+  return {
+    points,
+    score: relativeScore(points, exposure.distanceM, config.score),
+  };
+}
+
+function harshBandPoints(
+  level: HarshEventLevel | undefined,
+  light: number,
+  medium: number,
+  heavy: number,
+): number {
+  if (level === "heavy") {
+    return heavy;
+  }
+  if (level === "medium") {
+    return medium;
+  }
+  return light;
 }
 
 /**
- * Signed points at the trip's current distance.
- * Harsh events are negative. A completed gentle maneuver is positive.
- * Impact and phone use are 0.
+ * Fixed points for one event. Distance, time, and severity do not change them.
+ * Overlaps do not add a further amount.
  */
 export function eventScorePoints(
-  event: Pick<DrivingEvent, "type" | "severity" | "overlaps">,
+  event: Pick<DrivingEvent, "type"> & {
+    peak?: number;
+    level?: HarshEventLevel;
+    severity?: number;
+    overlaps?: readonly string[];
+  },
   config: DetectorConfig,
   distanceM: number,
 ): number {
-  const scale = scoreExposureScale(distanceM, 0, config);
-  const weight = eventWeight(event.type, config);
-  if (isSmoothDrivingEvent(event.type)) {
-    return weight * scale * SCORE_PENALTY_X;
+  void config;
+  void distanceM;
+  void event.severity;
+  void event.overlaps;
+  switch (event.type) {
+    case "smooth_km":
+      return (event.peak ?? 4) >= 3.5 ? 4 : 3;
+    case "smooth_accel":
+    case "smooth_brake":
+    case "smooth_corner":
+      return 2;
+    case "harsh_accel":
+      return harshBandPoints(event.level, -6, -9, -12);
+    case "harsh_brake":
+      return harshBandPoints(event.level, -8, -12, -16);
+    case "harsh_corner":
+      return harshBandPoints(event.level, -6, -9, -12);
+    case "swerve":
+      return harshBandPoints(event.level, -5, -8, -10);
+    case "jerk":
+      return harshBandPoints(event.level, -3, -5, -6);
+    default:
+      return 0;
   }
-  const severity = Number.isFinite(event.severity) ? Math.min(1, Math.max(0, event.severity)) : 0;
-  let raw = weight * (0.4 + 0.6 * severity);
-  if (event.overlaps.length > 0) {
-    raw += config.score.compound;
-  }
-  const points = -(raw * scale * SCORE_PENALTY_X);
-  return points === 0 ? 0 : points;
 }
 
 export function eventCounts(
@@ -866,7 +942,7 @@ export function summarizeTrip(state: {
     durationMs: Math.max(0, state.endedAtMs - state.startedAtMs),
     maxSpeedMps: state.maxSpeedMps,
     avgSpeedMps: state.speedCount === 0 ? null : state.speedSum / state.speedCount,
-    score: scoreEvents(state.events, state.config, {
+    ...tripScoreFields(state.events, state.config, {
       distanceM: state.distanceM,
       durationMs: Math.max(0, state.endedAtMs - state.startedAtMs),
     }),
@@ -908,6 +984,8 @@ export function createTripAnalyzer(
     lastEventLevel: {},
     smoothHold: {},
     smoothCreditAtM: {},
+    spoiledKm: new Set(),
+    awardedKm: 0,
     openSpeeding: null,
     openHandheld: null,
     handheld: emptyHandheldFilter(),

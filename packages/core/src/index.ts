@@ -10,6 +10,8 @@ export {
   DEFAULT_NATIVE_START_OPTIONS,
   SCORE_MAX,
   SCORE_PENALTY_X,
+  SCORE_RELATIVE_EXPOSURE_MAX,
+  SCORE_RELATIVE_EXPOSURE_MIN,
   SMOOTH_CEILING_X,
   SMOOTH_CREDIT_WEIGHT,
   SMOOTH_FLOOR_MPS2,
@@ -18,6 +20,8 @@ export {
   SMOOTH_HOLD_MS,
   mergeDetectorConfig,
   mergeNativeStartOptions,
+  relativeScore,
+  relativeScoreWeight,
 } from "./config.js";
 export {
   analyzeTrip,
@@ -25,6 +29,7 @@ export {
   eventCounts,
   scoreEvents,
   eventScorePoints,
+  tripScoreFields,
   isSmoothDrivingEvent,
   scoreExposureScale,
   summarizeTrip,

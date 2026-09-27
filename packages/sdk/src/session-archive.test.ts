@@ -48,6 +48,7 @@ function sampleSession(id: string, extras: Partial<SessionExport> = {}): Session
       maxSpeedMps: 14,
       avgSpeedMps: 10,
       score: 92,
+      points: -8,
       eventCounts: {
         harsh_accel: 0,
         harsh_brake: 1,
@@ -60,6 +61,7 @@ function sampleSession(id: string, extras: Partial<SessionExport> = {}): Session
         smooth_accel: 0,
         smooth_brake: 0,
         smooth_corner: 0,
+        smooth_km: 0,
       },
     },
     device: { platform: "web", model: "test" },

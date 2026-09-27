@@ -1,10 +1,39 @@
 package com.harshy.sdk
 
+import kotlin.math.max
+import kotlin.math.min
+
 /** Event penalties and smooth credits apply at 1/2. */
 const val SCORE_PENALTY_X = 1.0 / 2.0
 
-/** A smooth trip can rise above 100, and stops here. */
-const val SCORE_MAX = 120.0
+/** The ledger cannot rise above this. */
+const val SCORE_MAX = 100.0
+
+/** Relative 0–100 grade from the absolute ledger. 0 points → 100; negatives pull it down. */
+const val SCORE_RELATIVE_EXPOSURE_MIN = 0.5
+const val SCORE_RELATIVE_EXPOSURE_MAX = 2.5
+
+fun relativeScoreWeight(
+  distanceM: Double,
+  refDistanceKm: Double = 5.0,
+  minDistanceKm: Double = 2.0,
+): Double {
+  val km = max(distanceM / 1000.0, minDistanceKm)
+  val exposure = km / max(refDistanceKm, 1e-6)
+  val weight = 1.0 / max(exposure, 1e-6)
+  return min(SCORE_RELATIVE_EXPOSURE_MAX, max(SCORE_RELATIVE_EXPOSURE_MIN, weight))
+}
+
+/** Relative 0–100 grade from the absolute ledger and trip length. */
+fun relativeScore(
+  points: Double,
+  distanceM: Double = 0.0,
+  refDistanceKm: Double = 5.0,
+  minDistanceKm: Double = 2.0,
+): Double {
+  val weighted = points * relativeScoreWeight(distanceM, refDistanceKm, minDistanceKm)
+  return min(SCORE_MAX, max(0.0, 100.0 + weighted))
+}
 
 /** A long trip keeps at least this share of each event's reference weight. Time is not used. */
 const val SCORE_EXPOSURE_MIN = 0.6

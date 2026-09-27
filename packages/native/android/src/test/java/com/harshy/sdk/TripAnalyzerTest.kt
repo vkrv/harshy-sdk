@@ -105,6 +105,7 @@ class TripAnalyzerTest {
     val event = session.events.find { it.type == POSSIBLE_IMPACT_TYPE }
     assertEquals("front", event?.impactDirection)
     assertEquals(1, session.metrics.eventCounts[POSSIBLE_IMPACT_TYPE])
+    assertEquals(0.0, session.metrics.points, 0.001)
     assertEquals(100.0, session.metrics.score, 0.001)
   }
 
@@ -251,6 +252,7 @@ class TripAnalyzerTest {
     assertTrue(isPhoneHandheld(event!!))
     assertTrue(event.endT != null)
     assertEquals(1, session.metrics.eventCounts[PHONE_HANDHELD_TYPE])
+    assertEquals(0.0, session.metrics.points, 0.001)
     assertEquals(100.0, session.metrics.score, 0.001)
   }
 
@@ -401,7 +403,7 @@ class TripAnalyzerTest {
     }
     val session = analyzer.finalize(7000.0)
     assertEquals(1, session.events.count { it.type == EVENT_SMOOTH_ACCEL })
-    assertTrue(session.metrics.score > 100.0)
-    assertTrue(session.metrics.score <= SCORE_MAX)
+    assertEquals(2.0, session.metrics.points, 0.001)
+    assertEquals(100.0, session.metrics.score, 0.001)
   }
 }

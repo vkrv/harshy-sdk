@@ -53,6 +53,7 @@ class TripLiveTest {
       swerveLevel = "norm",
       distanceM = 1_240.0,
       durationMs = 65_000.0,
+      points = -8.4,
       score = 91.6,
     )
     val payload = tripLivePayloadFromMetrics(metrics, "Signumb")

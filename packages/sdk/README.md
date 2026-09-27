@@ -240,7 +240,8 @@ Subscribe to real-time updates during a trip:
 const unsubscribe = harshy.subscribe({
   // Aggregated metrics (score, speed, distance, etc.)
   onMetrics: (metrics: LiveMetrics) => {
-    console.log(metrics.score);           // 0-100
+    console.log(metrics.score);           // relative 0–100
+    console.log(metrics.points);          // absolute ledger
     console.log(metrics.speedMps);        // current speed m/s
     console.log(metrics.distanceM);       // trip distance
     console.log(metrics.durationMs);      // trip duration
@@ -285,7 +286,8 @@ unsubscribe();
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `score` | `number` | Trip score 0-100 |
+| `score` | `number` | Relative trip score 0–100 (`100 + points × lengthWeight`, clamped) |
+| `points` | `number` | Absolute event-point ledger (can be negative; capped at 100) |
 | `speedMps` | `number` | Current speed (m/s) |
 | `distanceM` | `number` | Total distance (m) |
 | `durationMs` | `number` | Trip duration (ms) |

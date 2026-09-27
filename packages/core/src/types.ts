@@ -45,7 +45,8 @@ export type DrivingEventType =
   | "phone_handheld"
   | "smooth_accel"
   | "smooth_brake"
-  | "smooth_corner";
+  | "smooth_corner"
+  | "smooth_km";
 
 /** Honest v1 impact axis. Not left/right or a body panel. */
 export type ImpactDirection = "front" | "rear" | "rollover" | "unknown";
@@ -94,6 +95,9 @@ export type LiveMetrics = {
   swerveLevel: HarshLevel;
   distanceM: number;
   durationMs: number;
+  /** Absolute event-point ledger (can be negative; capped at 100). */
+  points: number;
+  /** Relative 0–100 grade: `clamp(100 + points, 0, 100)`. */
   score: number;
 };
 
@@ -233,6 +237,9 @@ export type TripMetrics = {
   durationMs: number;
   maxSpeedMps: number | null;
   avgSpeedMps: number | null;
+  /** Absolute event-point ledger (can be negative; capped at 100). */
+  points: number;
+  /** Relative 0–100 grade: `clamp(100 + points, 0, 100)`. */
   score: number;
   eventCounts: Record<DrivingEventType, number>;
 };

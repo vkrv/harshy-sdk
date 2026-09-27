@@ -59,6 +59,7 @@ data class LiveMetrics(
   val swerveLevel: String,
   val distanceM: Double,
   val durationMs: Double,
+  val points: Double,
   val score: Double,
 )
 
@@ -67,6 +68,7 @@ data class TripMetrics(
   val durationMs: Double,
   val maxSpeedMps: Double?,
   val avgSpeedMps: Double?,
+  val points: Double,
   val score: Double,
   val eventCounts: Map<String, Int>,
 )
@@ -136,6 +138,7 @@ internal const val EVENT_JERK = "jerk"
 internal const val EVENT_SMOOTH_ACCEL = "smooth_accel"
 internal const val EVENT_SMOOTH_BRAKE = "smooth_brake"
 internal const val EVENT_SMOOTH_CORNER = "smooth_corner"
+internal const val EVENT_SMOOTH_KM = "smooth_km"
 
 internal fun emptyEventCounts(): MutableMap<String, Int> {
   return mutableMapOf(
@@ -150,5 +153,6 @@ internal fun emptyEventCounts(): MutableMap<String, Int> {
     EVENT_SMOOTH_ACCEL to 0,
     EVENT_SMOOTH_BRAKE to 0,
     EVENT_SMOOTH_CORNER to 0,
+    EVENT_SMOOTH_KM to 0,
   )
 }

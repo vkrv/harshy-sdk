@@ -118,6 +118,7 @@ public struct HarshyLiveMetrics: Equatable, Sendable {
   public var swerveLevel: String
   public var distanceM: Double
   public var durationMs: Double
+  public var points: Double
   public var score: Double
 }
 
@@ -126,6 +127,7 @@ public struct HarshyTripMetrics: Equatable, Sendable {
   public var durationMs: Double
   public var maxSpeedMps: Double?
   public var avgSpeedMps: Double?
+  public var points: Double
   public var score: Double
   public var eventCounts: [String: Int]
 }
@@ -256,6 +258,7 @@ let harshyEventJerk = "jerk"
 let harshyEventSmoothAccel = "smooth_accel"
 let harshyEventSmoothBrake = "smooth_brake"
 let harshyEventSmoothCorner = "smooth_corner"
+let harshyEventSmoothKm = "smooth_km"
 
 func harshyEmptyEventCounts() -> [String: Int] {
   [
@@ -270,6 +273,7 @@ func harshyEmptyEventCounts() -> [String: Int] {
     harshyEventSmoothAccel: 0,
     harshyEventSmoothBrake: 0,
     harshyEventSmoothCorner: 0,
+    harshyEventSmoothKm: 0,
   ]
 }
 

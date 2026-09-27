@@ -2,6 +2,7 @@ package com.harshy.sdk
 
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 
 data class AnalyzerPush(
   val metrics: LiveMetrics,
@@ -40,6 +41,8 @@ class TripAnalyzer(
   private var heldSpeedLeap: LocationSample? = null
   private val smoothHold = mutableMapOf<String, SmoothHold>()
   private val smoothCreditAtM = mutableMapOf<String, Double>()
+  private val spoiledKm = mutableSetOf<Int>()
+  private var awardedKm = 0
 
   fun setConfig(next: DetectorConfig) {
     config = mergeDetectorConfig(next)
@@ -191,6 +194,7 @@ class TripAnalyzer(
         lastEventAt[type] = t
         lastEventLevel[type] = level
         tagCompoundOverlaps(events, existing, t, config.compoundWindowMs)
+        noteHarshKilometre(type)
         return existing
       }
     }
@@ -211,7 +215,21 @@ class TripAnalyzer(
     lastEventAt[type] = t
     lastEventLevel[type] = level
     tagCompoundOverlaps(events, event, t, config.compoundWindowMs)
+    noteHarshKilometre(type)
     return event
+  }
+
+  private fun noteHarshKilometre(type: String) {
+    if (
+      type != EVENT_HARSH_ACCEL &&
+      type != EVENT_HARSH_BRAKE &&
+      type != EVENT_HARSH_CORNER &&
+      type != EVENT_SWERVE &&
+      type != EVENT_JERK
+    ) {
+      return
+    }
+    spoiledKm.add(kotlin.math.floor(distanceM / 1000.0).toInt())
   }
 
   private data class GpsAccel(
@@ -411,8 +429,36 @@ class TripAnalyzer(
 
     if (includeSmooth) {
       emitted.addAll(updateSmoothCredits(t, moving, loc, speed))
+      emitted.addAll(awardCleanKilometres(t, loc, speed))
     }
 
+    return emitted
+  }
+
+  private fun awardCleanKilometres(t: Double, loc: LocationSample?, speed: Double?): List<DrivingEvent> {
+    val emitted = mutableListOf<DrivingEvent>()
+    while (distanceM >= (awardedKm + 1) * 1000.0) {
+      val index = awardedKm
+      awardedKm += 1
+      if (spoiledKm.contains(index)) {
+        continue
+      }
+      val kmNumber = index + 1
+      val points = if (kmNumber <= 10) 4.0 else 3.0
+      val event = DrivingEvent(
+        id = "smooth_km-$kmNumber",
+        type = EVENT_SMOOTH_KM,
+        t = t,
+        peak = points,
+        severity = 0.0,
+        level = "light",
+        lat = loc?.lat,
+        lon = loc?.lon,
+        speedMps = speed,
+      )
+      events.add(event)
+      emitted.add(event)
+    }
     return emitted
   }
 
@@ -498,6 +544,7 @@ class TripAnalyzer(
     val moving = speedMps != null && speedMps >= config.minSpeedMps
     val levels = liveHarshLevels(moving, longitudinalAccelMps2, lateralAccelMps2, yawRateRadps, config)
     val last = lastImu
+    val points = scoreEvents(events, config, distanceM, durationMs)
     return LiveMetrics(
       t = t,
       speedMps = speedMps,
@@ -517,7 +564,8 @@ class TripAnalyzer(
       swerveLevel = levels.swerveLevel,
       distanceM = distanceM,
       durationMs = durationMs,
-      score = scoreEvents(events, config, distanceM, durationMs),
+      points = points,
+      score = relativeScore(points, distanceM, config.score.refDistanceKm, config.score.minDistanceKm),
     )
   }
 
@@ -652,12 +700,14 @@ class TripAnalyzer(
 
   private fun summarizeTrip(endedAtMs: Double): TripMetrics {
     val durationMs = max(0.0, endedAtMs - startedAtMs)
+    val points = scoreEvents(events, config, distanceM, durationMs)
     return TripMetrics(
       distanceM = distanceM,
       durationMs = durationMs,
       maxSpeedMps = maxSpeedMps,
       avgSpeedMps = if (speedCount == 0) null else speedSum / speedCount,
-      score = scoreEvents(events, config, distanceM, durationMs),
+      points = points,
+      score = relativeScore(points, distanceM, config.score.refDistanceKm, config.score.minDistanceKm),
       eventCounts = eventCounts(events),
     )
   }
@@ -681,22 +731,24 @@ fun scoreExposureScale(distanceM: Double, durationMs: Double, config: DetectorCo
 }
 
 fun eventScorePoints(event: DrivingEvent, config: DetectorConfig, distanceM: Double): Double {
-  val scale = scoreExposureScale(distanceM, 0.0, config)
-  val weight = eventWeight(event.type, config)
-  if (
-    event.type == EVENT_SMOOTH_ACCEL ||
-    event.type == EVENT_SMOOTH_BRAKE ||
-    event.type == EVENT_SMOOTH_CORNER
-  ) {
-    return weight * scale * SCORE_PENALTY_X
+  return when (event.type) {
+    EVENT_SMOOTH_KM -> if (event.peak >= 3.5) 4.0 else 3.0
+    EVENT_SMOOTH_ACCEL, EVENT_SMOOTH_BRAKE, EVENT_SMOOTH_CORNER -> 2.0
+    EVENT_HARSH_ACCEL -> harshBandPoints(event.level, -6.0, -9.0, -12.0)
+    EVENT_HARSH_BRAKE -> harshBandPoints(event.level, -8.0, -12.0, -16.0)
+    EVENT_HARSH_CORNER -> harshBandPoints(event.level, -6.0, -9.0, -12.0)
+    EVENT_SWERVE -> harshBandPoints(event.level, -5.0, -8.0, -10.0)
+    EVENT_JERK -> harshBandPoints(event.level, -3.0, -5.0, -6.0)
+    else -> 0.0
   }
-  val severity = event.severity.coerceIn(0.0, 1.0)
-  var raw = weight * (0.4 + 0.6 * severity)
-  if (event.overlaps.isNotEmpty()) {
-    raw += config.score.compound
+}
+
+private fun harshBandPoints(level: String, light: Double, medium: Double, heavy: Double): Double {
+  return when (level) {
+    "heavy" -> heavy
+    "medium" -> medium
+    else -> light
   }
-  val points = -(raw * scale * SCORE_PENALTY_X)
-  return if (points == 0.0) 0.0 else points
 }
 
 @Suppress("UNUSED_PARAMETER")
@@ -706,11 +758,11 @@ fun scoreEvents(
   distanceM: Double,
   durationMs: Double,
 ): Double {
-  var delta = 0.0
+  var sum = 0.0
   for (event in events) {
-    delta += eventScorePoints(event, config, distanceM)
+    sum += eventScorePoints(event, config, distanceM)
   }
-  return clamp(config.score.start + delta, 0.0, SCORE_MAX)
+  return min(sum, SCORE_MAX)
 }
 
 fun eventCounts(events: List<DrivingEvent>): Map<String, Int> {

@@ -103,6 +103,7 @@ describe("session contract", () => {
       smooth_accel: _smoothAccel,
       smooth_brake: _smoothBrake,
       smooth_corner: _smoothCorner,
+      smooth_km: _smoothKm,
       ...legacyCounts
     } = session.metrics.eventCounts;
     const parsed = parseSessionExport({
@@ -114,6 +115,7 @@ describe("session contract", () => {
     expect(parsed.metrics.eventCounts.smooth_accel).toBe(0);
     expect(parsed.metrics.eventCounts.smooth_brake).toBe(0);
     expect(parsed.metrics.eventCounts.smooth_corner).toBe(0);
+    expect(parsed.metrics.eventCounts.smooth_km).toBe(0);
   });
 
   it("fills trigger=manual on older JSON and keeps schemaVersion 1", () => {

@@ -156,6 +156,7 @@ extension HarshyTripMetrics {
       "durationMs": durationMs,
       "maxSpeedMps": maxSpeedMps ?? NSNull(),
       "avgSpeedMps": avgSpeedMps ?? NSNull(),
+      "points": points,
       "score": score,
       "eventCounts": eventCounts,
     ]

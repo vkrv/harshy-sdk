@@ -677,6 +677,7 @@ type CreateHarshyDeps = {
   maxHistory?: number;               // Max trips to keep (default: 100)
   liveDisplayTitle?: string;         // Notification title (default: Harshy)
   formatLiveDisplay?: (metrics, title) => TripLiveDisplayPayload;
+  device?: DeviceInfo;               // Host device for Auto attach / start when omitted
 };
 ```
 

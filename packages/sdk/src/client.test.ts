@@ -294,6 +294,88 @@ describe("Harshy SDK", () => {
     expect(client.getLiveLocation()).toEqual([point]);
   });
 
+  it("native Auto attach stamps the host device from createHarshy", async () => {
+    const point = {
+      t: 1,
+      lat: 32,
+      lon: 34,
+      altitudeM: null,
+      speedMps: 10,
+      courseDeg: 90,
+      accuracyM: 5,
+      altitudeAccuracyM: null,
+    };
+    let running = false;
+    let onNativeRunning: (() => void) | null = null;
+    const client = createHarshy({
+      nativeAvailable: true,
+      device: { platform: "android", model: "Pixel" },
+      createNativeEngine: () => ({
+        kind: "native",
+        getCapabilities: async () => ({
+          location: true,
+          accelerometer: true,
+          linearAcceleration: true,
+          gyroscope: true,
+          magnetometer: true,
+          barometer: false,
+          attitude: true,
+          backgroundLocation: true,
+        }),
+        getPermissionStatus: async () => ({
+          location: "granted",
+          backgroundLocation: "granted",
+          motion: "granted",
+          notifications: "granted",
+        }),
+        requestPermissions: async () => ({
+          location: "granted",
+          backgroundLocation: "granted",
+          motion: "granted",
+          notifications: "granted",
+        }),
+        start: async () => {
+          running = true;
+        },
+        stop: async () => ({
+          sessionId: "auto-native",
+          startedAtMs: 1,
+          endedAtMs: 2,
+          location: [point],
+          imu: [],
+          trigger: "auto",
+        }),
+        isRunning: async () => running,
+        getSnapshot: async () => ({
+          sessionId: "auto-native",
+          startedAtMs: 1,
+          endedAtMs: 2,
+          location: [point],
+          imu: [],
+          trigger: "auto",
+        }),
+        subscribe: () => () => {},
+        armWatch: async () => {},
+        disarmWatch: async () => {},
+        subscribeWatch: (listeners) => {
+          onNativeRunning = () => listeners.onNativeRunning?.();
+          return () => {
+            onNativeRunning = null;
+          };
+        },
+      }),
+    });
+
+    await client.arm();
+    running = true;
+    onNativeRunning?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(client.getState().running).toBe(true);
+    const session = await client.stop();
+    expect(session.device).toEqual({ platform: "android", model: "Pixel" });
+    expect(session.trigger).toBe("auto");
+  });
+
   it("recover keeps trigger=auto from the native snapshot", async () => {
     const point = {
       t: 1,

@@ -22,6 +22,7 @@ import {
   uploadSession,
   warmupEndConfig,
   type DetectorConfig,
+  type DeviceInfo,
   type IdleMotionState,
   type LiveMetrics,
   type LocationSample,
@@ -120,6 +121,11 @@ export type CreateHarshyDeps = {
   liveDisplayTitle?: string;
   /** Override metric formatting (e.g. imperial units in Signumb). */
   formatLiveDisplay?: (metrics: LiveMetrics, title: string) => TripLiveDisplayPayload;
+  /**
+   * Host device stamped on sessions when `start` / `recover` / native Auto attach
+   * omit `device`. Without this, native Auto trips fall back to `platform: "unknown"`.
+   */
+  device?: DeviceInfo;
 };
 
 function newSessionId(): string {
@@ -190,6 +196,22 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
   let requestAutoStart: () => Promise<void> = async () => undefined;
   let requestAutoStop: () => Promise<SessionExport> = async () => {
     throw new Error("Harshy client is not ready");
+  };
+  /** Last host-supplied device; used when native Auto attach omits `device`. */
+  let hostDevice: DeviceInfo | null = deps.device ?? null;
+
+  const rememberDevice = (device: DeviceInfo | undefined) => {
+    if (device) {
+      hostDevice = device;
+    }
+  };
+
+  const resolveSessionDevice = (
+    options: HarshyStartOptions | undefined,
+    fallback: DeviceInfo,
+  ): DeviceInfo => {
+    rememberDevice(options?.device);
+    return options?.device ?? lastRaw?.device ?? hostDevice ?? fallback;
   };
 
   const trimLastRaw = () => {
@@ -514,10 +536,10 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       ...options?.detector,
     });
     sessionId = raw.sessionId ?? sessionId ?? newSessionId();
-    const device = options?.device ?? lastRaw?.device ?? {
-      platform: "unknown" as const,
+    const device = resolveSessionDevice(options, {
+      platform: "unknown",
       model: null,
-    };
+    });
     const trigger = parseTripTrigger(raw.trigger ?? options?.trigger ?? lastRaw?.trigger);
     analyzer = createTripAnalyzer(detectorConfig, {
       sessionId,
@@ -648,10 +670,10 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       }
       sessionId = newSessionId();
       const startedAtMs = Date.now();
-      const device = options?.device ?? {
+      const device = resolveSessionDevice(options, {
         platform: resolved === "simulated" ? "web" : "unknown",
         model: null,
-      };
+      });
       analyzer = createTripAnalyzer(detectorConfig, {
         sessionId,
         startedAtMs,
@@ -762,6 +784,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       emitState();
     },
     async recover(options) {
+      rememberDevice(options?.device);
       if (!nativeAvailable) {
         return false;
       }
@@ -973,7 +996,11 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
     },
   };
 
-  requestAutoStart = () => client.start({ trigger: "auto" });
+  requestAutoStart = () =>
+    client.start({
+      trigger: "auto",
+      ...(hostDevice ? { device: hostDevice } : {}),
+    });
   requestAutoStop = () => client.stop();
 
   return client;

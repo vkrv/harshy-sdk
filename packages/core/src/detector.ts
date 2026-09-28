@@ -631,7 +631,7 @@ function awardCleanKilometres(
       continue;
     }
     const kmNumber = index + 1;
-    const points = kmNumber <= 10 ? 4 : 3;
+    const points = kmNumber <= 10 ? 3 : 2;
     const event: DrivingEvent = {
       id: `smooth_km-${kmNumber}`,
       type: "smooth_km",
@@ -1019,7 +1019,7 @@ export function eventScorePoints(
   void event.overlaps;
   switch (event.type) {
     case "smooth_km":
-      return (event.peak ?? 4) >= 3.5 ? 4 : 3;
+      return (event.peak ?? 3) >= 2.5 ? 3 : 2;
     case "smooth_accel":
     case "smooth_brake":
     case "smooth_corner":

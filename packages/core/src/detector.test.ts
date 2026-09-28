@@ -414,11 +414,11 @@ describe("detector", () => {
       eventScorePoints({ ...brake, type: "smooth_accel", overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
     ).toBe(2);
     expect(
-      eventScorePoints({ ...brake, type: "smooth_km", peak: 4, overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
-    ).toBe(4);
-    expect(
       eventScorePoints({ ...brake, type: "smooth_km", peak: 3, overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
     ).toBe(3);
+    expect(
+      eventScorePoints({ ...brake, type: "smooth_km", peak: 2, overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
+    ).toBe(2);
   });
 
   it("starts at zero when there are no events", () => {
@@ -481,8 +481,8 @@ describe("detector", () => {
     }
     const kilometres = analyzer.getEvents().filter((event) => event.type === "smooth_km");
     expect(kilometres).toHaveLength(1);
-    expect(kilometres[0]?.peak).toBe(4);
-    expect(analyzer.getMetrics().points).toBe(4);
+    expect(kilometres[0]?.peak).toBe(3);
+    expect(analyzer.getMetrics().points).toBe(3);
     expect(analyzer.getMetrics().score).toBe(100);
     expect(analyzer.getEvents().some((event) => event.type.startsWith("harsh_"))).toBe(false);
   });
@@ -504,7 +504,7 @@ describe("detector", () => {
   });
 
   it("ignores distance and duration when scoring the same events", () => {
-    const events = [brake, { ...brake, id: "km", type: "smooth_km" as const, peak: 4, level: "light" as const }];
+    const events = [brake, { ...brake, id: "km", type: "smooth_km" as const, peak: 3, level: "light" as const }];
     const farQuick = scoreEvents(events, DEFAULT_DETECTOR_CONFIG, {
       distanceM: 40_000,
       durationMs: 5 * 60_000,
@@ -517,7 +517,7 @@ describe("detector", () => {
       distanceM: 40_000,
       durationMs: 40 * 60_000,
     });
-    expect(farQuick).toBe(-12);
+    expect(farQuick).toBe(-13);
     expect(nearSlow).toBe(farQuick);
     expect(farSlow).toBe(farQuick);
   });

@@ -521,6 +521,23 @@ public final class HarshyTripAnalyzer {
     var sinceT: Double
     var sinceDistanceM: Double
     var peak: Double
+    var sign: Int?
+    var headingAtStartDeg: Double?
+  }
+
+  private func latestPathHeadingDeg() -> Double? {
+    guard let current = lastGoodLocation else { return nil }
+    if location.count < 2 { return nil }
+    for i in stride(from: location.count - 2, through: 0, by: -1) {
+      let previous = location[i]
+      if let bearing = harshyPathBearingDeg(from: previous, to: current) {
+        return bearing
+      }
+      if current.t - previous.t > harshyGpsAccelMaxDtSec * 1000 {
+        break
+      }
+    }
+    return nil
   }
 
   private func smoothMagnitude(type: String, longitudinal: Double?, lateral: Double?) -> Double? {
@@ -560,8 +577,67 @@ public final class HarshyTripAnalyzer {
         smoothHold.removeValue(forKey: type)
         continue
       }
+      if type == harshyEventSmoothCorner {
+        guard let lateral = lateralAccelMps2, lateral != 0 else {
+          smoothHold.removeValue(forKey: type)
+          continue
+        }
+        let sign = lateral > 0 ? 1 : -1
+        guard let heading = latestPathHeadingDeg() else {
+          smoothHold.removeValue(forKey: type)
+          continue
+        }
+        if let hold = smoothHold[type], hold.sign == sign {
+          var updated = hold
+          updated.peak = max(hold.peak, magnitude)
+          smoothHold[type] = updated
+          let heldMs = t - updated.sinceT
+          let movedM = distanceM - updated.sinceDistanceM
+          if heldMs < harshySmoothHoldMs || movedM < harshySmoothHoldMinM {
+            continue
+          }
+          guard let startHeading = updated.headingAtStartDeg,
+            abs(harshyUnwrapDeltaDeg(fromDeg: startHeading, toDeg: heading)) >= harshySmoothCornerMinTurnDeg
+          else {
+            continue
+          }
+          if let lastCreditM = smoothCreditAtM[type], distanceM - lastCreditM < harshySmoothGapM {
+            continue
+          }
+          let event = HarshyDrivingEvent(
+            id: "\(type)-\(t)",
+            type: type,
+            t: t,
+            peak: updated.peak,
+            severity: 0,
+            level: "light",
+            lat: loc?.lat,
+            lon: loc?.lon,
+            speedMps: speed
+          )
+          events.append(event)
+          smoothCreditAtM[type] = distanceM
+          smoothHold.removeValue(forKey: type)
+          emitted.append(event)
+        } else {
+          smoothHold[type] = SmoothHold(
+            sinceT: t,
+            sinceDistanceM: distanceM,
+            peak: magnitude,
+            sign: sign,
+            headingAtStartDeg: heading
+          )
+        }
+        continue
+      }
       guard var hold = smoothHold[type] else {
-        smoothHold[type] = SmoothHold(sinceT: t, sinceDistanceM: distanceM, peak: magnitude)
+        smoothHold[type] = SmoothHold(
+          sinceT: t,
+          sinceDistanceM: distanceM,
+          peak: magnitude,
+          sign: nil,
+          headingAtStartDeg: nil
+        )
         continue
       }
       hold.peak = max(hold.peak, magnitude)

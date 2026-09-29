@@ -5,6 +5,7 @@ import {
   SCORE_EXPOSURE_MIN,
   SCORE_MAX,
   SMOOTH_CEILING_X,
+  SMOOTH_CORNER_MIN_TURN_DEG,
   SMOOTH_FLOOR_MPS2,
   SMOOTH_GAP_M,
   SMOOTH_HOLD_MIN_M,
@@ -27,6 +28,7 @@ import {
   mpsToKmh,
   pathBearingDeg,
   severityFromPeak,
+  unwrapDeltaDeg,
   verticalGyroRadps,
 } from "./geo.js";
 import {
@@ -89,6 +91,10 @@ type SmoothHold = {
   sinceT: number;
   sinceDistanceM: number;
   peak: number;
+  /** Lateral sign for `smooth_corner` (+1 / −1). Accel/brake omit. */
+  sign?: number;
+  /** Track heading when a corner hold began. */
+  headingAtStartDeg?: number;
 };
 
 export function isSmoothDrivingEvent(
@@ -685,6 +691,28 @@ function smoothMagnitude(
   return magnitude;
 }
 
+/** Latest displacement bearing (≥2 m step). Null when the track is too short. */
+function latestPathHeadingDeg(state: AnalyzerState): number | null {
+  const current = state.lastGoodLocation;
+  if (!current) {
+    return null;
+  }
+  for (let i = state.location.length - 2; i >= 0; i -= 1) {
+    const previous = state.location[i];
+    if (!previous) {
+      continue;
+    }
+    const bearing = pathBearingDeg(previous, current);
+    if (bearing != null) {
+      return bearing;
+    }
+    if (current.t - previous.t > GPS_ACCEL_MAX_DT_SEC * 1000) {
+      break;
+    }
+  }
+  return null;
+}
+
 function updateSmoothCredits(
   state: AnalyzerState,
   t: number,
@@ -706,6 +734,67 @@ function updateSmoothCredits(
       delete state.smoothHold[type];
       continue;
     }
+
+    if (type === "smooth_corner") {
+      const lateral = state.lateralAccelMps2;
+      if (lateral == null || lateral === 0) {
+        delete state.smoothHold[type];
+        continue;
+      }
+      const sign = lateral > 0 ? 1 : -1;
+      const heading = latestPathHeadingDeg(state);
+      if (heading == null) {
+        delete state.smoothHold[type];
+        continue;
+      }
+      const hold = state.smoothHold[type];
+      if (!hold || hold.sign !== sign) {
+        state.smoothHold[type] = {
+          sinceT: t,
+          sinceDistanceM: state.distanceM,
+          peak: magnitude,
+          sign,
+          headingAtStartDeg: heading,
+        };
+        continue;
+      }
+      hold.peak = Math.max(hold.peak, magnitude);
+      const heldMs = t - hold.sinceT;
+      const movedM = state.distanceM - hold.sinceDistanceM;
+      if (heldMs < SMOOTH_HOLD_MS || movedM < SMOOTH_HOLD_MIN_M) {
+        continue;
+      }
+      const startHeading = hold.headingAtStartDeg;
+      if (
+        startHeading == null ||
+        Math.abs(unwrapDeltaDeg(startHeading, heading)) < SMOOTH_CORNER_MIN_TURN_DEG
+      ) {
+        continue;
+      }
+      const lastCreditM = state.smoothCreditAtM[type];
+      if (lastCreditM != null && state.distanceM - lastCreditM < SMOOTH_GAP_M) {
+        continue;
+      }
+      const event: DrivingEvent = {
+        id: `${type}-${t}`,
+        type,
+        t,
+        endT: null,
+        peak: hold.peak,
+        severity: 0,
+        level: "light",
+        lat: location?.lat ?? null,
+        lon: location?.lon ?? null,
+        speedMps: speed,
+        overlaps: [],
+      };
+      state.events.push(event);
+      state.smoothCreditAtM[type] = state.distanceM;
+      delete state.smoothHold[type];
+      emitted.push(event);
+      continue;
+    }
+
     const hold = state.smoothHold[type];
     if (!hold) {
       state.smoothHold[type] = { sinceT: t, sinceDistanceM: state.distanceM, peak: magnitude };

@@ -33,6 +33,8 @@ public let harshySmoothCeilingX = 0.6
 public let harshySmoothHoldMs = 3000.0
 public let harshySmoothHoldMinM = 15.0
 public let harshySmoothGapM = 400.0
+/** Net track heading change required during a smooth_corner hold. */
+public let harshySmoothCornerMinTurnDeg = 15.0
 public let harshySmoothCreditWeight = 1.6
 
 public struct HarshyDetectorScoreWeights: Equatable, Sendable {

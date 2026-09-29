@@ -474,6 +474,51 @@ describe("detector", () => {
     expect(analyzer.getMetrics().score).toBe(100);
   });
 
+  it("does not credit a smooth corner when GPS path wiggles on a straight road", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "straight-wiggle",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    let lat = 59.4;
+    let lon = 24.8;
+    const speed = 8;
+    analyzer.pushLocation(placed(0, speed, 90, lat, lon));
+    for (let step = 1; step <= 12; step += 1) {
+      // Alternate left/right 6° so lateral g sits in the gentle band but the road does not turn.
+      const heading = 90 + (step % 2 === 0 ? 6 : -6);
+      const next = destination(lat, lon, heading, speed);
+      lat = next.lat;
+      lon = next.lon;
+      analyzer.pushLocation(placed(step * 1000, speed, heading, lat, lon));
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "smooth_corner")).toBe(false);
+  });
+
+  it("credits a smooth corner when the track turns gently the same way", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "gentle-arc",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    let lat = 59.4;
+    let lon = 24.8;
+    const speed = 8;
+    let heading = 0;
+    analyzer.pushLocation(placed(0, speed, heading, lat, lon));
+    for (let step = 1; step <= 8; step += 1) {
+      heading += 6;
+      const next = destination(lat, lon, heading, speed);
+      lat = next.lat;
+      lon = next.lon;
+      analyzer.pushLocation(placed(step * 1000, speed, heading, lat, lon));
+    }
+    const corners = analyzer.getEvents().filter((event) => event.type === "smooth_corner");
+    expect(corners.length).toBeGreaterThanOrEqual(1);
+    expect(corners[0]?.peak).toBeGreaterThanOrEqual(0.5);
+    expect(corners[0]?.peak).toBeLessThanOrEqual(3 * 0.6);
+  });
+
   it("pays 4 points when the first kilometre finishes clean", () => {
     const analyzer = createTripAnalyzer(undefined, {
       sessionId: "clean-km",

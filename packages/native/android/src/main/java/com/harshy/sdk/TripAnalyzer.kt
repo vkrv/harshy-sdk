@@ -538,7 +538,28 @@ class TripAnalyzer(
     return emitted
   }
 
-  private data class SmoothHold(var sinceT: Double, var sinceDistanceM: Double, var peak: Double)
+  private data class SmoothHold(
+    var sinceT: Double,
+    var sinceDistanceM: Double,
+    var peak: Double,
+    var sign: Int? = null,
+    var headingAtStartDeg: Double? = null,
+  )
+
+  private fun latestPathHeadingDeg(): Double? {
+    val current = lastGoodLocation ?: return null
+    for (i in location.size - 2 downTo 0) {
+      val previous = location[i]
+      val bearing = pathBearingDeg(previous, current)
+      if (bearing != null) {
+        return bearing
+      }
+      if (current.t - previous.t > GPS_ACCEL_MAX_DT_SEC * 1000) {
+        break
+      }
+    }
+    return null
+  }
 
   private fun smoothMagnitude(type: String, longitudinal: Double?, lateral: Double?): Double? {
     val magnitude: Double
@@ -578,6 +599,54 @@ class TripAnalyzer(
       val magnitude = if (moving) smoothMagnitude(type, longitudinalAccelMps2, lateralAccelMps2) else null
       if (magnitude == null) {
         smoothHold.remove(type)
+        continue
+      }
+      if (type == EVENT_SMOOTH_CORNER) {
+        val lateral = lateralAccelMps2
+        if (lateral == null || lateral == 0.0) {
+          smoothHold.remove(type)
+          continue
+        }
+        val sign = if (lateral > 0) 1 else -1
+        val heading = latestPathHeadingDeg()
+        if (heading == null) {
+          smoothHold.remove(type)
+          continue
+        }
+        val hold = smoothHold[type]
+        if (hold == null || hold.sign != sign) {
+          smoothHold[type] = SmoothHold(t, distanceM, magnitude, sign, heading)
+          continue
+        }
+        hold.peak = max(hold.peak, magnitude)
+        val heldMs = t - hold.sinceT
+        val movedM = distanceM - hold.sinceDistanceM
+        if (heldMs < SMOOTH_HOLD_MS || movedM < SMOOTH_HOLD_MIN_M) {
+          continue
+        }
+        val startHeading = hold.headingAtStartDeg
+        if (startHeading == null || abs(unwrapDeltaDeg(startHeading, heading)) < SMOOTH_CORNER_MIN_TURN_DEG) {
+          continue
+        }
+        val lastCreditM = smoothCreditAtM[type]
+        if (lastCreditM != null && distanceM - lastCreditM < SMOOTH_GAP_M) {
+          continue
+        }
+        val event = DrivingEvent(
+          id = "$type-$t",
+          type = type,
+          t = t,
+          peak = hold.peak,
+          severity = 0.0,
+          level = "light",
+          lat = loc?.lat,
+          lon = loc?.lon,
+          speedMps = speed,
+        )
+        events.add(event)
+        smoothCreditAtM[type] = distanceM
+        smoothHold.remove(type)
+        emitted.add(event)
         continue
       }
       val hold = smoothHold[type]

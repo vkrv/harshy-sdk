@@ -97,6 +97,12 @@ export const SMOOTH_HOLD_MIN_M = 15;
 export const SMOOTH_GAP_M = 400;
 
 /**
+ * A gentle corner also needs this much net track heading change during the hold.
+ * GPS path jitter on a straight road stays in the lateral band but does not turn.
+ */
+export const SMOOTH_CORNER_MIN_TURN_DEG = 15;
+
+/**
  * Flat credit before the ½ factor. At the 5 km reference that is +0.8.
  * The severity curve does not apply.
  */

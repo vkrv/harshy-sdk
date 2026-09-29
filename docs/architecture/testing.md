@@ -17,7 +17,7 @@ CI (`.github/workflows/ci.yml`) runs install → build → typecheck → lint �
 
 ## What to test
 
-- Detector events, harsh bands, smooth accel/brake/corner credits, speeding spans, swerve, compound overlaps, live heading filter, displacement `derivedCourseDeg`, track-vs-chip yaw (`confirmedYawRadps`), GPS long/lat accel window, same-type coalesce, road-quality RMS, possible-impact pulses, phone-handheld spans, GPS teleport / coarse-fix rejection, live sample caps + idle motion gate, auto-trip start/end heuristics, optional session `trigger` defaulting to `manual`, and re-scoring when thresholds change (`packages/core`)
+- Detector events, harsh bands, smooth accel/brake/corner credits (`smooth_corner` needs same-sign lateral + ≥15° net track heading), speeding spans, swerve, compound overlaps, live heading filter, displacement `derivedCourseDeg`, track-vs-chip yaw (`confirmedYawRadps`), GPS long/lat accel window, same-type coalesce, road-quality RMS, possible-impact pulses, phone-handheld spans, GPS teleport / coarse-fix rejection, live sample caps + idle motion gate, auto-trip start/end heuristics, optional session `trigger` defaulting to `manual`, and re-scoring when thresholds change (`packages/core`)
 - SDK session export, retune, upload adapter, attach/`recover`, `getLiveLocation()`, optional `historyStore`, indexed JSON archive, auto-trip `arm` / `disarm` / watch-state machine, `startPreview` (not a trip), and the host barrel (`packages/sdk`)
 - Compact session JSON (`compactSessionExport`) keeps `accuracyM` and still parses with Zod (`packages/core`)
 - Native Android JUnit and HarshyMath Swift parity (`packages/native`)

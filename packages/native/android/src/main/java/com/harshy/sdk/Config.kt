@@ -46,6 +46,8 @@ const val SMOOTH_CEILING_X = 0.6
 const val SMOOTH_HOLD_MS = 3000.0
 const val SMOOTH_HOLD_MIN_M = 15.0
 const val SMOOTH_GAP_M = 400.0
+/** Net track heading change required during a smooth_corner hold. */
+const val SMOOTH_CORNER_MIN_TURN_DEG = 15.0
 const val SMOOTH_CREDIT_WEIGHT = 1.6
 
 data class DetectorScoreWeights(

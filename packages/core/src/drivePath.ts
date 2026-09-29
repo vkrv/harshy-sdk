@@ -33,7 +33,7 @@ export const DRIVE_FIX_SPIKE_RATIO = 2.5;
 
 /**
  * Lat/lon printed with this many fractional digits or fewer, plus null speed,
- * matches Android network/cell injects seen in Signumb trips.
+ * matches Android network/cell injects seen in Apexmatic trips.
  */
 export const DRIVE_FIX_COARSE_FRACTION_DIGITS = 7;
 

@@ -68,7 +68,7 @@ object TripLiveDisplay {
   }
 
   private fun appLabel(context: Context): String {
-    return context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty().ifBlank { "Signumb" }
+    return context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty().ifBlank { "Apexmatic" }
   }
 
   private fun notification(context: Context, title: String, body: String): Notification {

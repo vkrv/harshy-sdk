@@ -24,7 +24,7 @@ export type WatchFix = {
 };
 
 /**
- * v1 start/stop tunables. Marked clearly so Signumb / hosts can retune later
+ * v1 start/stop tunables. Marked clearly so Apexmatic / hosts can retune later
  * without forking the heuristic. Not part of `DetectorConfig`.
  */
 export type TripHeuristicConfig = {

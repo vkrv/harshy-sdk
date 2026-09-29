@@ -76,7 +76,7 @@ export type HarshyListeners = {
 
 export type HarshyClientState = {
   running: boolean;
-  /** Foreground GPS+IMU readout (Signumb Sensors). Never a trip. */
+  /** Foreground GPS+IMU readout (Apexmatic Sensors). Never a trip. */
   previewing: boolean;
   source: HarshySource | "native" | "simulated" | "idle";
   sessionId: string | null;

@@ -29,8 +29,8 @@ const base: LiveMetrics = {
 describe("formatTripLiveDisplay", () => {
   it("formats key numbers for the live notice", () => {
     expect(formatTripDurationMs(65_000)).toBe("1:05");
-    expect(formatTripLiveDisplay(base, "Signumb")).toEqual({
-      title: "Signumb",
+    expect(formatTripLiveDisplay(base, "Apexmatic")).toEqual({
+      title: "Apexmatic",
       score: "97",
       speed: "36 km/h",
       duration: "1:05",

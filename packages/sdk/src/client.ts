@@ -113,13 +113,13 @@ export type CreateHarshyDeps = {
   /**
    * Durable trip archive (one JSON file per session + `index.json`).
    * `stop()` / idle `retune()` write a compact copy (no IMU).
-   * Signumb keeps its own LabRecording archive — do not pass this from the lab client.
+   * Apexmatic keeps its own LabRecording archive — do not pass this from the lab client.
    */
   historyStore?: JsonFileStore;
   maxHistory?: number;
-  /** App name on the trip notification / Live Activity. Defaults to Signumb. */
+  /** App name on the trip notification / Live Activity. Defaults to Apexmatic. */
   liveDisplayTitle?: string;
-  /** Override metric formatting (e.g. imperial units in Signumb). */
+  /** Override metric formatting (e.g. imperial units in Apexmatic). */
   formatLiveDisplay?: (metrics: LiveMetrics, title: string) => TripLiveDisplayPayload;
   /**
    * Host device stamped on sessions when `start` / `recover` / native Auto attach
@@ -176,7 +176,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
   let sessionId: string | null = null;
   const listeners = new Set<HarshyListeners>();
   let lastLivePublishMs = 0;
-  const liveTitle = deps.liveDisplayTitle ?? "Signumb";
+  const liveTitle = deps.liveDisplayTitle ?? "Apexmatic";
   const formatLive =
     deps.formatLiveDisplay ?? ((metrics: LiveMetrics, title: string) => formatTripLiveDisplay(metrics, title));
   let nativeImuHz = mergeNativeStartOptions(deps.native).imuHz;

@@ -932,7 +932,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
 
   private fun appLabel(): String {
     return context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty()
-      .ifBlank { "Signumb" }
+      .ifBlank { "Apexmatic" }
   }
 
   /** Trip numbers while recording; “Waiting for a drive” while only the watch is armed. */

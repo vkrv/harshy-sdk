@@ -13,7 +13,7 @@ class TripForegroundService : Service() {
     super.onCreate()
     // Must call startForeground promptly after startForegroundService or the OS kills the app.
     try {
-      val label = applicationInfo.loadLabel(packageManager)?.toString().orEmpty().ifBlank { "Signumb" }
+      val label = applicationInfo.loadLabel(packageManager)?.toString().orEmpty().ifBlank { "Apexmatic" }
       val engine = HarshyEngine.shared(this)
       val notification = if (engine.isWatching() && !engine.isRunning()) {
         TripLiveDisplay.buildWatchNotification(this, label)

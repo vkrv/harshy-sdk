@@ -22,9 +22,9 @@ class TripLiveTest {
         "duration" to null,
         "distance" to "1.2 km",
       ),
-      "Signumb",
+      "Apexmatic",
     )
-    assertEquals("Signumb", payload.title)
+    assertEquals("Apexmatic", payload.title)
     assertEquals("88", payload.score)
     assertEquals("—", payload.speed)
     assertEquals("0:00", payload.duration)
@@ -56,7 +56,7 @@ class TripLiveTest {
       points = -8.4,
       score = 91.6,
     )
-    val payload = tripLivePayloadFromMetrics(metrics, "Signumb")
+    val payload = tripLivePayloadFromMetrics(metrics, "Apexmatic")
     assertEquals("92", payload.score)
     assertEquals("36 km/h", payload.speed)
     assertEquals("1:05", payload.duration)
@@ -65,7 +65,7 @@ class TripLiveTest {
 
   @Test
   fun notificationLineJoinsKeyNumbers() {
-    val payload = TripLivePayload("Signumb", "90", "40 km/h", "0:12", "0.10 km")
+    val payload = TripLivePayload("Apexmatic", "90", "40 km/h", "0:12", "0.10 km")
     assertEquals("Score 90 · 40 km/h · 0:12 · 0.10 km", payload.line())
   }
 }

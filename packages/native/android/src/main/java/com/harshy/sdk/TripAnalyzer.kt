@@ -826,10 +826,10 @@ fun eventScorePoints(event: DrivingEvent, config: DetectorConfig, distanceM: Dou
   return when (event.type) {
     EVENT_SMOOTH_KM -> if (event.peak >= 2.5) 3.0 else 2.0
     EVENT_SMOOTH_ACCEL, EVENT_SMOOTH_BRAKE, EVENT_SMOOTH_CORNER -> 2.0
-    EVENT_HARSH_ACCEL -> harshBandPoints(event.level, -6.0, -9.0, -12.0)
+    EVENT_HARSH_ACCEL -> harshBandPoints(event.level, -5.0, -8.0, -12.0)
     EVENT_HARSH_BRAKE -> harshBandPoints(event.level, -8.0, -12.0, -16.0)
-    EVENT_HARSH_CORNER -> harshBandPoints(event.level, -6.0, -9.0, -12.0)
-    EVENT_SWERVE -> harshBandPoints(event.level, -5.0, -8.0, -10.0)
+    EVENT_HARSH_CORNER -> harshBandPoints(event.level, -4.0, -8.0, -12.0)
+    EVENT_SWERVE -> harshBandPoints(event.level, -4.0, -7.0, -10.0)
     EVENT_JERK -> harshBandPoints(event.level, -3.0, -5.0, -6.0)
     else -> 0.0
   }

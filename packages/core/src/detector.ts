@@ -1025,13 +1025,13 @@ export function eventScorePoints(
     case "smooth_corner":
       return 2;
     case "harsh_accel":
-      return harshBandPoints(event.level, -6, -9, -12);
+      return harshBandPoints(event.level, -5, -8, -12);
     case "harsh_brake":
       return harshBandPoints(event.level, -8, -12, -16);
     case "harsh_corner":
-      return harshBandPoints(event.level, -6, -9, -12);
+      return harshBandPoints(event.level, -4, -8, -12);
     case "swerve":
-      return harshBandPoints(event.level, -5, -8, -10);
+      return harshBandPoints(event.level, -4, -7, -10);
     case "jerk":
       return harshBandPoints(event.level, -3, -5, -6);
     default:

@@ -864,13 +864,13 @@ public func harshyEventScorePoints(
   case harshyEventSmoothAccel, harshyEventSmoothBrake, harshyEventSmoothCorner:
     return 2
   case harshyEventHarshAccel:
-    return harshyBandPoints(event.level, light: -6, medium: -9, heavy: -12)
+    return harshyBandPoints(event.level, light: -5, medium: -8, heavy: -12)
   case harshyEventHarshBrake:
     return harshyBandPoints(event.level, light: -8, medium: -12, heavy: -16)
   case harshyEventHarshCorner:
-    return harshyBandPoints(event.level, light: -6, medium: -9, heavy: -12)
+    return harshyBandPoints(event.level, light: -4, medium: -8, heavy: -12)
   case harshyEventSwerve:
-    return harshyBandPoints(event.level, light: -5, medium: -8, heavy: -10)
+    return harshyBandPoints(event.level, light: -4, medium: -7, heavy: -10)
   case harshyEventJerk:
     return harshyBandPoints(event.level, light: -3, medium: -5, heavy: -6)
   default:

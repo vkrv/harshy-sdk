@@ -397,6 +397,16 @@ describe("detector", () => {
 
   it("uses a fixed amount for each event", () => {
     expect(eventScorePoints({ ...brake, level: "light" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-8);
+    expect(eventScorePoints({ ...brake, type: "harsh_accel", level: "light" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-5);
+    expect(eventScorePoints({ ...brake, type: "harsh_accel", level: "medium" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-8);
+    expect(eventScorePoints({ ...brake, type: "harsh_accel", level: "heavy" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-12);
+    expect(eventScorePoints({ ...brake, type: "harsh_corner", level: "light" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-4);
+    expect(eventScorePoints({ ...brake, type: "harsh_corner", level: "medium" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-8);
+    expect(eventScorePoints({ ...brake, type: "harsh_corner", level: "heavy" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-12);
+    expect(eventScorePoints({ ...brake, type: "swerve", level: "light" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-4);
+    expect(eventScorePoints({ ...brake, type: "swerve", level: "medium" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-7);
+    expect(eventScorePoints({ ...brake, type: "swerve", level: "heavy" }, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(-10);
+    
     expect(eventScorePoints({ ...brake, level: "medium" }, DEFAULT_DETECTOR_CONFIG, 40_000)).toBe(-12);
     expect(eventScorePoints(brake, DEFAULT_DETECTOR_CONFIG, 1_000)).toBe(
       eventScorePoints(brake, DEFAULT_DETECTOR_CONFIG, 40_000),

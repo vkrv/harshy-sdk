@@ -6,7 +6,7 @@ public protocol HarshyUploadAdapter: AnyObject {
 
 public extension HarshySessionExport {
   func toJSONObject() -> [String: Any] {
-    [
+    var json: [String: Any] = [
       "schemaVersion": schemaVersion,
       "sessionId": sessionId,
       "startedAt": startedAt,
@@ -22,6 +22,10 @@ public extension HarshySessionExport {
       ] as [String: Any],
       "trigger": trigger,
     ]
+    if let capture {
+      json["capture"] = capture.toJSONObject()
+    }
+    return json
   }
 
   func toJSONString() throws -> String {
@@ -89,6 +93,17 @@ extension HarshyDetectorConfig {
         "smoothBrake": score.smoothBrake,
         "smoothCorner": score.smoothCorner,
       ],
+    ]
+  }
+}
+
+extension HarshyNativeStartOptions {
+  func toJSONObject() -> [String: Any] {
+    [
+      "imuHz": imuHz,
+      "locationIntervalMs": locationIntervalMs,
+      "background": background,
+      "trigger": trigger,
     ]
   }
 }

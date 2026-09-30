@@ -232,6 +232,7 @@ public struct HarshySessionExport {
   public var metrics: HarshyTripMetrics
   public var device: HarshyDeviceInfo
   public var trigger: String
+  public var capture: HarshyNativeStartOptions?
 }
 
 public let harshyPossibleImpactType = "possible_impact"

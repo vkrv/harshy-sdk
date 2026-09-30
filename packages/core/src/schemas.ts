@@ -156,6 +156,13 @@ export const detectorConfigSchema = z.object({
 
 export const tripTriggerSchema = z.enum(["manual", "auto"]);
 
+export const nativeStartOptionsSchema = z.object({
+  imuHz: z.number(),
+  locationIntervalMs: z.number(),
+  background: z.boolean(),
+  trigger: tripTriggerSchema.optional(),
+});
+
 export const sessionExportSchema = z.object({
   schemaVersion: z.literal(1),
   sessionId: z.string(),
@@ -203,6 +210,8 @@ export const sessionExportSchema = z.object({
   }),
   /** Pre-auto-trip JSON omits this; fill manual so `schemaVersion` stays 1. */
   trigger: tripTriggerSchema.default("manual"),
+  /** Original native capture options used to start the trip. Absent on pre-capture JSON. */
+  capture: nativeStartOptionsSchema.optional(),
 });
 
 export function parseDetectorConfig(input: unknown): DetectorConfig {

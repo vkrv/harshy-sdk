@@ -149,6 +149,53 @@ describe("session contract", () => {
     expect(parseSessionExport(session).trigger).toBe("auto");
   });
 
+  it("preserves capture options through parse and upload", async () => {
+    const trip = generateSampleTrip();
+    const session = analyzeTrip({
+      location: trip.location,
+      imu: trip.imu,
+      sessionId: trip.sessionId,
+      startedAtMs: trip.startedAtMs,
+      endedAtMs: trip.endedAtMs,
+      device: { platform: "web", model: "sim" },
+      trigger: "auto",
+      capture: {
+        imuHz: 25,
+        locationIntervalMs: 1000,
+        background: false,
+        trigger: "auto",
+      },
+    });
+    expect(session.capture).toEqual({
+      imuHz: 25,
+      locationIntervalMs: 1000,
+      background: false,
+      trigger: "auto",
+    });
+    const parsed = parseSessionExport(session);
+    expect(parsed.capture).toEqual(session.capture);
+    let uploadedCapture: unknown;
+    await uploadSession(session, {
+      upload: async (payload) => {
+        uploadedCapture = payload.capture;
+      },
+    });
+    expect(uploadedCapture).toEqual(session.capture);
+  });
+
+  it("accepts sessions without capture", () => {
+    const trip = generateSampleTrip();
+    const session = analyzeTrip({
+      location: trip.location,
+      imu: trip.imu,
+      sessionId: trip.sessionId,
+      startedAtMs: trip.startedAtMs,
+      endedAtMs: trip.endedAtMs,
+      device: { platform: "web", model: "sim" },
+    });
+    expect(parseSessionExport(session)).not.toHaveProperty("capture");
+  });
+
   it("refuses upload without an adapter", async () => {
     const trip = generateSampleTrip();
     const session = analyzeTrip({

@@ -541,12 +541,18 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       model: null,
     });
     const trigger = parseTripTrigger(raw.trigger ?? options?.trigger ?? lastRaw?.trigger);
+    const capture = mergeNativeStartOptions({
+      ...deps.native,
+      ...options?.native,
+      trigger,
+    });
     analyzer = createTripAnalyzer(detectorConfig, {
       sessionId,
       startedAtMs: raw.startedAtMs || Date.now(),
       device,
       imuHz: nativeImuHz,
       trigger,
+      capture,
     });
     lastRaw = {
       location: [...raw.location],
@@ -680,6 +686,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
         device,
         imuHz: nativeImuHz,
         trigger: tripTrigger,
+        capture: nativeOpts,
       });
       lastRaw = {
         location: [],

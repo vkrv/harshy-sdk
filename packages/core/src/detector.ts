@@ -71,6 +71,7 @@ import type {
   SessionExport,
   TripMetrics,
   TripTrigger,
+  NativeStartOptions,
 } from "./types.js";
 
 export type TripAnalyzerOptions = {
@@ -81,6 +82,8 @@ export type TripAnalyzerOptions = {
   imuHz?: number;
   /** Why capture began. Default `manual`. Distinct from sensor source. */
   trigger?: TripTrigger;
+  /** Original native capture options used to start the trip. */
+  capture?: NativeStartOptions;
 };
 
 const SMOOTH_TYPES = ["smooth_accel", "smooth_brake", "smooth_corner"] as const;
@@ -108,6 +111,7 @@ type AnalyzerState = {
   sessionId: string;
   startedAtMs: number;
   trigger: TripTrigger;
+  capture?: NativeStartOptions;
   device: DeviceInfo;
   location: LocationSample[];
   imu: ImuSample[];
@@ -1187,6 +1191,7 @@ export function createTripAnalyzer(
     sessionId: options.sessionId,
     startedAtMs: options.startedAtMs,
     trigger: options.trigger ?? "manual",
+    capture: options.capture,
     device: options.device,
     location: [],
     imu: [],
@@ -1359,6 +1364,7 @@ export function createTripAnalyzer(
         }),
         device: state.device,
         trigger: state.trigger,
+        ...(state.capture ? { capture: state.capture } : {}),
       };
     },
   };
@@ -1373,12 +1379,14 @@ export function analyzeTrip(input: {
   endedAtMs: number;
   device: DeviceInfo;
   trigger?: TripTrigger;
+  capture?: NativeStartOptions;
 }): SessionExport {
   const analyzer = createTripAnalyzer(input.config, {
     sessionId: input.sessionId,
     startedAtMs: input.startedAtMs,
     device: input.device,
     trigger: input.trigger,
+    capture: input.capture,
   });
 
   const location = [...input.location].sort((a, b) => a.t - b.t);

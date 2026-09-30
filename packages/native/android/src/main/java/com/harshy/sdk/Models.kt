@@ -85,6 +85,7 @@ data class SessionExport(
   val metrics: TripMetrics,
   val device: DeviceInfo,
   val trigger: String = "manual",
+  val capture: NativeStartOptions? = null,
 )
 
 data class ClientState(

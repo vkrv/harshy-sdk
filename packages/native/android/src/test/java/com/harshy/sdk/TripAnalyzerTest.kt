@@ -393,6 +393,39 @@ class TripAnalyzerTest {
   }
 
   @Test
+  fun sessionJsonIncludesCapture() {
+    val session = analyzeTrip(
+      location = listOf(loc(0.0, 5.0)),
+      imu = emptyList(),
+      sessionId = "cap-1",
+      startedAtMs = 0.0,
+      endedAtMs = 1000.0,
+      device = DeviceInfo("android", "test"),
+      trigger = "auto",
+      capture = NativeStartOptions(imuHz = 25, locationIntervalMs = 1000, background = false, trigger = "auto"),
+    )
+    val json = session.toJsonObject()
+    val capture = json.getJSONObject("capture")
+    assertEquals(25, capture.getInt("imuHz"))
+    assertEquals(1000L, capture.getLong("locationIntervalMs"))
+    assertFalse(capture.getBoolean("background"))
+    assertEquals("auto", capture.getString("trigger"))
+  }
+
+  @Test
+  fun sessionJsonOmitsCaptureWhenAbsent() {
+    val session = analyzeTrip(
+      location = listOf(loc(0.0, 5.0)),
+      imu = emptyList(),
+      sessionId = "cap-2",
+      startedAtMs = 0.0,
+      endedAtMs = 1000.0,
+      device = DeviceInfo("android", "test"),
+    )
+    assertFalse(session.toJsonObject().has("capture"))
+  }
+
+  @Test
   fun recordsOneGentleAccelThenWaits() {
     val analyzer = TripAnalyzer(
       DetectorConfig.DEFAULT,

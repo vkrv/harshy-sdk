@@ -31,7 +31,16 @@ fun SessionExport.toJsonObject(): JSONObject {
     .put("model", device.model ?: JSONObject.NULL),
   )
   json.put("trigger", trigger)
+  capture?.let { json.put("capture", it.toJsonObject()) }
   return json
+}
+
+private fun NativeStartOptions.toJsonObject(): JSONObject {
+  return JSONObject()
+    .put("imuHz", imuHz)
+    .put("locationIntervalMs", locationIntervalMs)
+    .put("background", background)
+    .put("trigger", trigger)
 }
 
 private fun DetectorConfig.toJsonObject(): JSONObject {

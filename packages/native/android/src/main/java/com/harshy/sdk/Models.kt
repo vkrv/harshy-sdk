@@ -98,7 +98,8 @@ data class NativeStartOptions(
   val imuHz: Int = 50,
   val locationIntervalMs: Long = 500,
   val background: Boolean = true,
-  val trigger: String = "manual",
+  /** Omitted from JSON when null; session-level `trigger` is the source of truth. */
+  val trigger: String? = null,
 )
 
 /** Mutable so cooldown upgrades and compound tags match the JS analyzer. */

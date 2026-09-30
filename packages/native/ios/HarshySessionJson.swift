@@ -99,12 +99,15 @@ extension HarshyDetectorConfig {
 
 extension HarshyNativeStartOptions {
   func toJSONObject() -> [String: Any] {
-    [
+    var json: [String: Any] = [
       "imuHz": imuHz,
       "locationIntervalMs": locationIntervalMs,
       "background": background,
-      "trigger": trigger,
     ]
+    if let trigger {
+      json["trigger"] = trigger
+    }
+    return json
   }
 }
 

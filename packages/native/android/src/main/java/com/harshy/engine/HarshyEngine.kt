@@ -449,6 +449,12 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       "endedAtMs" to endedAtMs,
       "running" to running,
       "trigger" to tripTrigger,
+      "capture" to mapOf(
+        "imuHz" to imuHz,
+        "locationIntervalMs" to locationIntervalMs,
+        "background" to background,
+        "trigger" to tripTrigger,
+      ),
       "location" to synchronized(locationLock) { locationSamples.toList() },
       "imu" to if (includeImu) {
         synchronized(imuLock) { imuSamples.toList() }

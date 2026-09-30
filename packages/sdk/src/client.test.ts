@@ -443,6 +443,88 @@ describe("Harshy SDK", () => {
     expect(session.trigger).toBe("auto");
   });
 
+  it("recover prefers snapshot capture over current native defaults", async () => {
+    const point = {
+      t: 1,
+      lat: 32,
+      lon: 34,
+      altitudeM: null,
+      speedMps: 10,
+      courseDeg: 90,
+      accuracyM: 5,
+      altitudeAccuracyM: null,
+    };
+    const client = createHarshy({
+      nativeAvailable: true,
+      native: { imuHz: 50, locationIntervalMs: 500, background: true },
+      createNativeEngine: () => ({
+        kind: "native",
+        getCapabilities: async () => ({
+          location: true,
+          accelerometer: true,
+          linearAcceleration: true,
+          gyroscope: true,
+          magnetometer: true,
+          barometer: false,
+          attitude: true,
+          backgroundLocation: true,
+        }),
+        getPermissionStatus: async () => ({
+          location: "granted",
+          backgroundLocation: "granted",
+          motion: "granted",
+          notifications: "granted",
+        }),
+        requestPermissions: async () => ({
+          location: "granted",
+          backgroundLocation: "granted",
+          motion: "granted",
+          notifications: "granted",
+        }),
+        start: async () => undefined,
+        stop: async () => ({
+          sessionId: "alive",
+          startedAtMs: 1,
+          endedAtMs: 2,
+          location: [point],
+          imu: [],
+          trigger: "auto",
+          capture: {
+            imuHz: 25,
+            locationIntervalMs: 1000,
+            background: false,
+            trigger: "auto",
+          },
+        }),
+        isRunning: async () => true,
+        getSnapshot: async () => ({
+          sessionId: "alive",
+          startedAtMs: 1,
+          endedAtMs: 2,
+          location: [point],
+          imu: [],
+          trigger: "auto",
+          capture: {
+            imuHz: 25,
+            locationIntervalMs: 1000,
+            background: false,
+            trigger: "auto",
+          },
+        }),
+        subscribe: () => () => {},
+      }),
+    });
+
+    expect(await client.recover({ device: { platform: "android", model: "test" } })).toBe(true);
+    const session = await client.stop();
+    expect(session.capture).toEqual({
+      imuHz: 25,
+      locationIntervalMs: 1000,
+      background: false,
+      trigger: "auto",
+    });
+  });
+
   it("recover of an auto trip already parked for 10 min auto-stops and trims the idle tail", async () => {
     const loc = (t: number, speedMps: number, lon: number): LocationSample => ({
       t,

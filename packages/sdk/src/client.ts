@@ -167,6 +167,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
     sessionId: string;
     device: SessionExport["device"];
     trigger: TripTrigger;
+    capture?: NativeStartOptions;
   } | null = null;
   let uploadAdapter: UploadAdapter | null = null;
   let detectorConfig = mergeDetectorConfig(deps.detector);
@@ -541,16 +542,19 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       model: null,
     });
     const trigger = parseTripTrigger(raw.trigger ?? options?.trigger ?? lastRaw?.trigger);
-    const capture = mergeNativeStartOptions({
-      ...deps.native,
-      ...options?.native,
-      trigger,
-    });
+    const capture =
+      raw.capture ??
+      lastRaw?.capture ??
+      mergeNativeStartOptions({
+        ...deps.native,
+        ...options?.native,
+        trigger,
+      });
     analyzer = createTripAnalyzer(detectorConfig, {
       sessionId,
       startedAtMs: raw.startedAtMs || Date.now(),
       device,
-      imuHz: nativeImuHz,
+      imuHz: capture.imuHz,
       trigger,
       capture,
     });
@@ -562,8 +566,10 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       sessionId,
       device,
       trigger,
+      capture,
     };
     tripTrigger = trigger;
+    nativeImuHz = capture.imuHz;
     await tearDownWatch();
     trimLastRaw();
     idleMotion = emptyIdleMotionState();
@@ -696,6 +702,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
         sessionId,
         device,
         trigger: tripTrigger,
+        capture: nativeOpts,
       };
       idleMotion = emptyIdleMotionState();
       endHeuristic = emptyTripEndState();
@@ -889,6 +896,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
           device: priorRaw.device,
           config: detectorConfig,
           trigger: priorRaw.trigger,
+          capture: priorRaw.capture,
         });
       } else {
         lastSession = liveAnalyzer.finalize(endedAtMs);
@@ -901,6 +909,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
         sessionId: lastSession.sessionId,
         device: priorRaw.device,
         trigger: priorRaw.trigger,
+        capture: priorRaw.capture ?? lastSession.capture,
       };
       endHeuristic = emptyTripEndState();
       analyzer = null;

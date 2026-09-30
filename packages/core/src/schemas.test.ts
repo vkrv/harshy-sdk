@@ -183,6 +183,30 @@ describe("session contract", () => {
     expect(uploadedCapture).toEqual(session.capture);
   });
 
+  it("accepts partial capture and fills native start defaults", () => {
+    const trip = generateSampleTrip();
+    const session = analyzeTrip({
+      location: trip.location,
+      imu: trip.imu,
+      sessionId: trip.sessionId,
+      startedAtMs: trip.startedAtMs,
+      endedAtMs: trip.endedAtMs,
+      device: { platform: "web", model: "sim" },
+      trigger: "auto",
+    });
+    const { capture: _capture, ...base } = parseSessionExport(session);
+    const parsed = parseSessionExport({
+      ...base,
+      capture: { trigger: "auto" },
+    });
+    expect(parsed.capture).toEqual({
+      imuHz: 50,
+      locationIntervalMs: 500,
+      background: true,
+      trigger: "auto",
+    });
+  });
+
   it("accepts sessions without capture", () => {
     const trip = generateSampleTrip();
     const session = analyzeTrip({

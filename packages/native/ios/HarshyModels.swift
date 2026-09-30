@@ -142,13 +142,14 @@ public struct HarshyNativeStartOptions: Equatable, Sendable {
   public var imuHz: Int
   public var locationIntervalMs: Int
   public var background: Bool
-  public var trigger: String
+  /** Omitted from JSON when nil; session-level `trigger` is the source of truth. */
+  public var trigger: String?
 
   public init(
     imuHz: Int = 50,
     locationIntervalMs: Int = 500,
     background: Bool = true,
-    trigger: String = "manual"
+    trigger: String? = nil
   ) {
     self.imuHz = imuHz
     self.locationIntervalMs = locationIntervalMs

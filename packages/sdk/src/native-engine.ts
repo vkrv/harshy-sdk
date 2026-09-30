@@ -13,6 +13,28 @@ function hasNativePreview(): boolean {
   return typeof HarshyNative.startPreview === "function";
 }
 
+function parseCapture(raw: unknown): NativeStartOptions | undefined {
+  if (raw == null || typeof raw !== "object") {
+    return undefined;
+  }
+  const record = raw as Record<string, unknown>;
+  const hasField =
+    record.imuHz != null ||
+    record.locationIntervalMs != null ||
+    record.background != null ||
+    record.trigger != null;
+  if (!hasField) {
+    return undefined;
+  }
+  return mergeNativeStartOptions({
+    imuHz: typeof record.imuHz === "number" ? record.imuHz : undefined,
+    locationIntervalMs:
+      typeof record.locationIntervalMs === "number" ? record.locationIntervalMs : undefined,
+    background: typeof record.background === "boolean" ? record.background : undefined,
+    trigger: parseTripTrigger(record.trigger),
+  });
+}
+
 function toSession(raw: {
   sessionId: string | null;
   startedAtMs: number;
@@ -20,7 +42,9 @@ function toSession(raw: {
   location: unknown[];
   imu: unknown[];
   trigger?: unknown;
+  capture?: unknown;
 }): EngineSession {
+  const capture = parseCapture(raw.capture);
   return {
     sessionId: raw.sessionId,
     startedAtMs: raw.startedAtMs,
@@ -28,6 +52,7 @@ function toSession(raw: {
     location: parseLocationList(raw.location),
     imu: parseImuList(raw.imu),
     trigger: parseTripTrigger(raw.trigger),
+    ...(capture ? { capture } : {}),
   };
 }
 

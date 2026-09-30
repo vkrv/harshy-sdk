@@ -339,6 +339,12 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
       "location": location,
       "imu": imu,
       "trigger": tripTrigger,
+      "capture": [
+        "imuHz": imuHz,
+        "locationIntervalMs": locationIntervalMs,
+        "background": background,
+        "trigger": tripTrigger,
+      ] as [String: Any],
       "capabilities": capabilities(),
     ]
   }

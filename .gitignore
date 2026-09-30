@@ -22,7 +22,6 @@ build/
 *.swp
 *.swo
 .DS_Store
-.history
 
 # Logs
 *.log

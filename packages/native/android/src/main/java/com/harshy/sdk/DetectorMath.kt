@@ -109,7 +109,17 @@ internal fun verticalGyroRadps(gyro: Vec3?, gravity: Vec3?): Double? {
   return if (about.isFinite()) about else null
 }
 
-internal fun confirmedYawRadps(
+internal data class ConfirmedYaw(
+  val omega: Double?,
+  val pathOnly: Boolean,
+)
+
+/**
+ * Yaw for corner/swerve. `pathOnly` is true when the result is path heading
+ * without chip agreement or gyro confirmation — GPS polyline noise must not
+ * become a heavy corner.
+ */
+internal fun confirmedYawDetail(
   dtSec: Double,
   chipFromDeg: Double?,
   chipToDeg: Double?,
@@ -117,9 +127,9 @@ internal fun confirmedYawRadps(
   pathToDeg: Double?,
   verticalGyroRadps: Double?,
   phoneHandheld: Boolean,
-): Double? {
+): ConfirmedYaw {
   if (!dtSec.isFinite() || dtSec <= 0.0) {
-    return null
+    return ConfirmedYaw(null, false)
   }
   val chipDelta = if (chipFromDeg != null && chipToDeg != null && chipFromDeg.isFinite() && chipToDeg.isFinite()) {
     unwrapDeltaDeg(chipFromDeg, chipToDeg)
@@ -135,20 +145,47 @@ internal fun confirmedYawRadps(
   val pathOmega = pathDelta?.let { toRad(it) / dtSec }
   if (pathOmega != null && chipOmega != null && chipDelta != null && pathDelta != null) {
     if (kotlin.math.abs(chipDelta - pathDelta) <= YAW_COURSE_DISAGREE_DEG) {
-      return pathOmega
+      return ConfirmedYaw(pathOmega, false)
     }
     if (gyroConfirmsChipYaw(chipOmega, verticalGyroRadps, phoneHandheld)) {
-      return chipOmega
+      return ConfirmedYaw(chipOmega, false)
     }
-    return pathOmega
+    return ConfirmedYaw(pathOmega, true)
   }
   if (pathOmega != null) {
-    return pathOmega
+    return ConfirmedYaw(pathOmega, true)
   }
   if (chipOmega != null && gyroConfirmsChipYaw(chipOmega, verticalGyroRadps, phoneHandheld)) {
-    return chipOmega
+    return ConfirmedYaw(chipOmega, false)
   }
-  return null
+  return ConfirmedYaw(null, false)
+}
+
+internal fun confirmedYawRadps(
+  dtSec: Double,
+  chipFromDeg: Double?,
+  chipToDeg: Double?,
+  pathFromDeg: Double?,
+  pathToDeg: Double?,
+  verticalGyroRadps: Double?,
+  phoneHandheld: Boolean,
+): Double? = confirmedYawDetail(
+  dtSec,
+  chipFromDeg,
+  chipToDeg,
+  pathFromDeg,
+  pathToDeg,
+  verticalGyroRadps,
+  phoneHandheld,
+).omega
+
+/** Path chords shorter than accuracy noise are not a reliable heading. */
+internal fun pathBearingMinM(prevAccuracyM: Double?, currAccuracyM: Double?): Double {
+  val worst = maxOf(prevAccuracyM ?: 0.0, currAccuracyM ?: 0.0)
+  if (worst <= 0.0) {
+    return DERIVED_COURSE_MIN_M
+  }
+  return maxOf(DERIVED_COURSE_MIN_M, minOf(worst * 0.5, 15.0))
 }
 
 private fun gyroConfirmsChipYaw(chipOmega: Double, gyro: Double?, phoneHandheld: Boolean): Boolean {

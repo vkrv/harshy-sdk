@@ -35,6 +35,9 @@ class TripAnalyzer(
   private var pendingImpact: PendingImpact? = null
   private var longitudinalAccelMps2: Double? = null
   private var lateralAccelMps2: Double? = null
+  /** Latest GPS lateral came from path heading without chip/gyro confirm. */
+  private var pathOnlyLateral = false
+  private var harshCornerHold: SmoothHold? = null
   private var yawRateRadps: Double? = null
   private var prevYawRateRadps: Double? = null
   private var prevYawAtT: Double? = null
@@ -96,9 +99,11 @@ class TripAnalyzer(
   }
 
   private fun commitLocation(sample: LocationSample): AnalyzerPush {
+    // Keep the OS chip course as-is. Filling from the path made every yaw look
+    // chip-confirmed and defeated path-only GPS noise gates.
     val stored = sample.copy(
       speedMps = derivedSpeedMps(lastGoodLocation, sample) ?: sample.speedMps,
-      courseDeg = derivedCourseDeg(lastGoodLocation, sample) ?: sample.courseDeg,
+      courseDeg = sample.courseDeg,
     )
     location.add(stored)
     if (locationUsable(stored, config)) {
@@ -107,7 +112,11 @@ class TripAnalyzer(
         distanceM += haversineM(previous, stored)
       }
       lastGoodLocation = stored
-      heading = advanceHeadingFilter(heading, stored, config.minSpeedMps)
+      heading = advanceHeadingFilter(
+        heading,
+        stored.copy(courseDeg = derivedCourseDeg(previous, sample)),
+        config.minSpeedMps,
+      )
       val speed = stored.speedMps
       if (speed != null) {
         speedSum += speed
@@ -119,6 +128,7 @@ class TripAnalyzer(
     val accel = gpsWindowAccel()
     longitudinalAccelMps2 = accel.longitudinal
     lateralAccelMps2 = accel.lateral
+    pathOnlyLateral = accel.pathOnlyLateral
     yawRateRadps = accel.yawRateRadps
     val yaw = accel.yawRateRadps
     yawJerkRadps2 =
@@ -255,12 +265,13 @@ class TripAnalyzer(
     val longitudinal: Double?,
     val lateral: Double?,
     val yawRateRadps: Double?,
+    val pathOnlyLateral: Boolean,
   )
 
   private fun gpsWindowAccel(): GpsAccel {
     val current = lastGoodLocation
     if (current == null || current.speedMps == null) {
-      return GpsAccel(null, null, null)
+      return GpsAccel(null, null, null, false)
     }
 
     var previous: LocationSample? = null
@@ -282,38 +293,53 @@ class TripAnalyzer(
     val currentSpeed = current.speedMps
     val prevSpeed = prev?.speedMps
     if (prev == null || prevSpeed == null || currentSpeed == null) {
-      return GpsAccel(null, null, null)
+      return GpsAccel(null, null, null, false)
     }
 
     val dtSec = (current.t - prev.t) / 1000.0
     if (dtSec < GPS_ACCEL_MIN_DT_SEC || dtSec > GPS_ACCEL_MAX_DT_SEC) {
-      return GpsAccel(null, null, null)
+      return GpsAccel(null, null, null, false)
     }
 
     val longitudinal = (currentSpeed - prevSpeed) / dtSec
     val before = if (previousIndex > 0) location[previousIndex - 1] else null
-    val omega = confirmedYawRadps(
+    val pathMinM = pathBearingMinM(prev.accuracyM, current.accuracyM)
+    val yaw = confirmedYawDetail(
       dtSec = dtSec,
       chipFromDeg = prev.courseDeg,
       chipToDeg = current.courseDeg,
-      pathFromDeg = pathBearingDeg(before, prev),
-      pathToDeg = pathBearingDeg(prev, current),
+      pathFromDeg = pathBearingDeg(before, prev, pathMinM),
+      pathToDeg = pathBearingDeg(prev, current, pathMinM),
       verticalGyroRadps = meanVerticalGyro(prev.t, current.t),
       phoneHandheld = openHandheld != null,
     )
     var lateral: Double? = null
-    var yaw: Double? = null
+    var yawRate: Double? = null
+    var pathOnlyLateral = false
     val speedsOk = prevSpeed >= config.minSpeedMps && currentSpeed >= config.minSpeedMps
+    val omega = yaw.omega
     if (omega != null) {
       val speed = (currentSpeed + prevSpeed) / 2.0
-      lateral = speed * omega
+      val nextLateral = speed * omega
+      if (yaw.pathOnly) {
+        pathOnlyLateral = true
+        val hasAcc = prev.accuracyM != null || current.accuracyM != null
+        val worstAcc = maxOf(prev.accuracyM ?: 0.0, current.accuracyM ?: 0.0)
+        lateral = when {
+          hasAcc && worstAcc > PATH_ONLY_CORNER_MAX_ACCURACY_M -> null
+          abs(nextLateral) > PATH_ONLY_LATERAL_MAX_MPS2 -> null
+          else -> nextLateral
+        }
+      } else {
+        lateral = nextLateral
+      }
       if (speedsOk) {
-        yaw = abs(omega)
+        yawRate = abs(omega)
       }
     } else if (speedsOk) {
-      yaw = 0.0
+      yawRate = 0.0
     }
-    return GpsAccel(longitudinal, lateral, yaw)
+    return GpsAccel(longitudinal, lateral, yawRate, pathOnlyLateral)
   }
 
   private fun meanVerticalGyro(fromT: Double, toT: Double): Double? {
@@ -419,9 +445,19 @@ class TripAnalyzer(
     val latAccel = lateralAccelMps2
     val cornering = moving && latAccel != null && abs(latAccel) >= config.harshCornerMps2
     if (cornering && latAccel != null) {
-      maybeEmit(EVENT_HARSH_CORNER, t, abs(latAccel), config.harshCornerMps2, loc, speed)?.let {
-        emitted.add(it)
+      val event = if (pathOnlyLateral) {
+        resolvePathOnlyHarshCorner(t, loc, speed)
+      } else {
+        maybeEmit(EVENT_HARSH_CORNER, t, abs(latAccel), config.harshCornerMps2, loc, speed)
       }
+      if (!pathOnlyLateral) {
+        harshCornerHold = null
+      }
+      if (event != null) {
+        emitted.add(event)
+      }
+    } else {
+      harshCornerHold = null
     }
 
     val yaw = yawRateRadps
@@ -547,6 +583,46 @@ class TripAnalyzer(
     var sign: Int? = null,
     var headingAtStartDeg: Double? = null,
   )
+
+  /**
+   * Path-only harsh corners need same-sign lateral held with a real heading change.
+   * Zig-zag GPS at the start of a trip flips sign and never commits.
+   */
+  private fun resolvePathOnlyHarshCorner(
+    t: Double,
+    loc: LocationSample?,
+    speed: Double?,
+  ): DrivingEvent? {
+    val lateral = lateralAccelMps2
+    if (lateral == null || lateral == 0.0) {
+      harshCornerHold = null
+      return null
+    }
+    val sign = if (lateral > 0) 1 else -1
+    val magnitude = abs(lateral)
+    val heading = latestPathHeadingDeg()
+    if (heading == null) {
+      harshCornerHold = null
+      return null
+    }
+    val hold = harshCornerHold
+    if (hold == null || hold.sign != sign) {
+      harshCornerHold = SmoothHold(t, distanceM, magnitude, sign, heading)
+      return null
+    }
+    hold.peak = max(hold.peak, magnitude)
+    val heldMs = t - hold.sinceT
+    val movedM = distanceM - hold.sinceDistanceM
+    if (heldMs < HARSH_CORNER_HOLD_MS || movedM < HARSH_CORNER_HOLD_MIN_M) {
+      return null
+    }
+    val startHeading = hold.headingAtStartDeg
+    if (startHeading == null || abs(unwrapDeltaDeg(startHeading, heading)) < HARSH_CORNER_MIN_TURN_DEG) {
+      return null
+    }
+    harshCornerHold = null
+    return maybeEmit(EVENT_HARSH_CORNER, t, hold.peak, config.harshCornerMps2, loc, speed)
+  }
 
   private fun latestPathHeadingDeg(): Double? {
     val current = lastGoodLocation ?: return null

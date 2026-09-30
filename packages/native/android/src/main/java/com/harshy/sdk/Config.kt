@@ -50,6 +50,17 @@ const val SMOOTH_GAP_M = 400.0
 const val SMOOTH_CORNER_MIN_TURN_DEG = 15.0
 const val SMOOTH_CREDIT_WEIGHT = 1.6
 
+/** Path-only harsh corners need same-sign lateral held this long with a real turn. */
+const val HARSH_CORNER_HOLD_MS = 1000.0
+const val HARSH_CORNER_HOLD_MIN_M = 8.0
+const val HARSH_CORNER_MIN_TURN_DEG = 20.0
+
+/** Path-only lateral ignored when either fix is poorer than this. */
+const val PATH_ONLY_CORNER_MAX_ACCURACY_M = 15.0
+
+/** Path-only lateral above this (~0.6 g) is GPS noise, not a vehicle turn. */
+const val PATH_ONLY_LATERAL_MAX_MPS2 = 6.0
+
 data class DetectorScoreWeights(
   val start: Double = 100.0,
   val harshAccel: Double = 6.0,

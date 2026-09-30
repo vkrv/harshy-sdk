@@ -58,7 +58,7 @@ function destination(
 function placed(
   t: number,
   speedMps: number,
-  courseDeg: number,
+  courseDeg: number | null,
   lat: number,
   lon: number,
 ): LocationSample {
@@ -493,6 +493,66 @@ describe("detector", () => {
       analyzer.pushLocation(placed(step * 1000, speed, heading, lat, lon));
     }
     expect(analyzer.getEvents().some((event) => event.type === "smooth_corner")).toBe(false);
+  });
+
+  it("does not score path-only zig-zag GPS as harsh corners at trip start", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "start-zigzag",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    // Mimic the on-road hiccup: no chip course, ~12–18 m accuracy, alternating track bearings.
+    let lat = 59.4287;
+    let lon = 24.7667;
+    const headings = [190, 261, 183, 215, 207, 222, 198, 205, 195, 202, 198];
+    const speed = 8.5;
+    analyzer.pushLocation({
+      ...placed(0, speed, null, lat, lon),
+      courseDeg: null,
+      accuracyM: 12,
+    });
+    for (let step = 0; step < headings.length; step += 1) {
+      const heading = headings[step]!;
+      const next = destination(lat, lon, heading, speed);
+      lat = next.lat;
+      lon = next.lon;
+      analyzer.pushLocation({
+        ...placed((step + 1) * 1000, speed, null, lat, lon),
+        courseDeg: null,
+        accuracyM: 12 + (step % 3) * 2,
+      });
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_corner")).toBe(false);
+  });
+
+  it("still scores a sustained path-only turn as a harsh corner when accuracy is good", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "path-arc",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    let lat = 59.4;
+    let lon = 24.8;
+    const speed = 10;
+    let heading = 0;
+    analyzer.pushLocation({
+      ...placed(0, speed, null, lat, lon),
+      courseDeg: null,
+      accuracyM: 5,
+    });
+    for (let step = 1; step <= 8; step += 1) {
+      // ~25°/s path turn at 10 m/s → lateral ≈ 4.4 m/s² (above harsh 3).
+      heading += 25;
+      const next = destination(lat, lon, heading, speed);
+      lat = next.lat;
+      lon = next.lon;
+      analyzer.pushLocation({
+        ...placed(step * 1000, speed, null, lat, lon),
+        courseDeg: null,
+        accuracyM: 5,
+      });
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_corner")).toBe(true);
   });
 
   it("credits a smooth corner when the track turns gently the same way", () => {

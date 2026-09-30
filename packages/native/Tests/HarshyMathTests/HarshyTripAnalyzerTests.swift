@@ -444,4 +444,69 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertEqual(session.metrics.points, 2, accuracy: 0.001)
     XCTAssertEqual(session.metrics.score, 100, accuracy: 0.001)
   }
+
+  func testDoesNotScorePathOnlyZigZagGpsAsHarshCornersAtTripStart() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "start-zigzag",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    var lat = 59.4287
+    var lon = 24.7667
+    let headings = [190.0, 261.0, 183.0, 215.0, 207.0, 222.0, 198.0, 205.0, 195.0, 202.0, 198.0]
+    let speed = 8.5
+    _ = analyzer.pushLocation(
+      HarshyLocationSample(t: 0, lat: lat, lon: lon, speedMps: speed, courseDeg: nil, accuracyM: 12)
+    )
+    for (step, heading) in headings.enumerated() {
+      let next = shift(lat, lon, bearingDeg: heading, distanceM: speed)
+      lat = next.lat
+      lon = next.lon
+      _ = analyzer.pushLocation(
+        HarshyLocationSample(
+          t: Double(step + 1) * 1000,
+          lat: lat,
+          lon: lon,
+          speedMps: speed,
+          courseDeg: nil,
+          accuracyM: 12 + Double(step % 3) * 2
+        )
+      )
+    }
+    XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshCorner })
+  }
+
+  func testStillScoresSustainedPathOnlyTurnAsHarshCornerWhenAccuracyIsGood() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "path-arc",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    var lat = 59.4
+    var lon = 24.8
+    let speed = 10.0
+    var heading = 0.0
+    _ = analyzer.pushLocation(
+      HarshyLocationSample(t: 0, lat: lat, lon: lon, speedMps: speed, courseDeg: nil, accuracyM: 5)
+    )
+    for step in 1...8 {
+      heading += 25
+      let next = shift(lat, lon, bearingDeg: heading, distanceM: speed)
+      lat = next.lat
+      lon = next.lon
+      _ = analyzer.pushLocation(
+        HarshyLocationSample(
+          t: Double(step) * 1000,
+          lat: lat,
+          lon: lon,
+          speedMps: speed,
+          courseDeg: nil,
+          accuracyM: 5
+        )
+      )
+    }
+    XCTAssertTrue(analyzer.getEvents().contains { $0.type == harshyEventHarshCorner })
+  }
 }

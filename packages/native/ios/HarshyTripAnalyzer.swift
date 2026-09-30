@@ -30,6 +30,9 @@ public final class HarshyTripAnalyzer {
   private var pendingImpact: HarshyPendingImpact?
   private var longitudinalAccelMps2: Double?
   private var lateralAccelMps2: Double?
+  /** Latest GPS lateral came from path heading without chip/gyro confirm. */
+  private var pathOnlyLateral = false
+  private var harshCornerHold: SmoothHold?
   private var yawRateRadps: Double?
   private var prevYawRateRadps: Double?
   private var prevYawAtT: Double?
@@ -110,14 +113,19 @@ public final class HarshyTripAnalyzer {
   private func commitLocation(_ sample: HarshyLocationSample) -> HarshyAnalyzerPush {
     var stored = sample
     stored.speedMps = harshyDerivedSpeedMps(from: lastGoodLocation, to: sample) ?? stored.speedMps
-    stored.courseDeg = harshyDerivedCourseDeg(from: lastGoodLocation, to: sample) ?? stored.courseDeg
+    // Keep the OS chip course as-is. Filling from the path made every yaw look
+    // chip-confirmed and defeated path-only GPS noise gates.
+    stored.courseDeg = sample.courseDeg
     location.append(stored)
     if locationUsable(stored) {
-      if let previous = lastGoodLocation {
+      let previous = lastGoodLocation
+      if let previous {
         distanceM += harshyHaversineM(previous, stored)
       }
       lastGoodLocation = stored
-      heading = harshyAdvanceHeadingFilter(heading, sample: stored, minSpeedMps: config.minSpeedMps)
+      var headingSample = stored
+      headingSample.courseDeg = harshyDerivedCourseDeg(from: previous, to: sample)
+      heading = harshyAdvanceHeadingFilter(heading, sample: headingSample, minSpeedMps: config.minSpeedMps)
       if let speed = stored.speedMps {
         speedSum += speed
         speedCount += 1
@@ -127,6 +135,7 @@ public final class HarshyTripAnalyzer {
     let accel = gpsWindowAccel()
     longitudinalAccelMps2 = accel.longitudinal
     lateralAccelMps2 = accel.lateral
+    pathOnlyLateral = accel.pathOnlyLateral
     yawRateRadps = accel.yawRateRadps
     let yaw = accel.yawRateRadps
     yawJerkRadps2 = yaw.flatMap {
@@ -249,9 +258,14 @@ public final class HarshyTripAnalyzer {
     spoiledKm.insert(Int(floor(distanceM / 1000)))
   }
 
-  private func gpsWindowAccel() -> (longitudinal: Double?, lateral: Double?, yawRateRadps: Double?) {
+  private func gpsWindowAccel() -> (
+    longitudinal: Double?,
+    lateral: Double?,
+    yawRateRadps: Double?,
+    pathOnlyLateral: Bool
+  ) {
     guard let current = lastGoodLocation, current.speedMps != nil else {
-      return (nil, nil, nil)
+      return (nil, nil, nil, false)
     }
     var previous: HarshyLocationSample?
     var previousIndex = -1
@@ -268,38 +282,54 @@ public final class HarshyTripAnalyzer {
       }
     }
     guard let previous, let prevSpeed = previous.speedMps, let currentSpeed = current.speedMps else {
-      return (nil, nil, nil)
+      return (nil, nil, nil, false)
     }
     let dtSec = (current.t - previous.t) / 1000
     if dtSec < harshyGpsAccelMinDtSec || dtSec > harshyGpsAccelMaxDtSec {
-      return (nil, nil, nil)
+      return (nil, nil, nil, false)
     }
     let longitudinal = (currentSpeed - prevSpeed) / dtSec
+    let pathMinM = harshyPathBearingMinM(prevAccuracyM: previous.accuracyM, currAccuracyM: current.accuracyM)
     let pathFromDeg: Double? = previousIndex > 0
-      ? harshyPathBearingDeg(from: location[previousIndex - 1], to: previous)
+      ? harshyPathBearingDeg(from: location[previousIndex - 1], to: previous, minDistanceM: pathMinM)
       : nil
-    let omega = harshyConfirmedYawRadps(
+    let yaw = harshyConfirmedYawDetail(
       dtSec: dtSec,
       chipFromDeg: previous.courseDeg,
       chipToDeg: current.courseDeg,
       pathFromDeg: pathFromDeg,
-      pathToDeg: harshyPathBearingDeg(from: previous, to: current),
+      pathToDeg: harshyPathBearingDeg(from: previous, to: current, minDistanceM: pathMinM),
       verticalGyroRadps: meanVerticalGyro(fromT: previous.t, toT: current.t),
       phoneHandheld: openHandheld != nil
     )
     var lateral: Double?
-    var yaw: Double?
+    var yawRate: Double?
+    var pathOnlyLateral = false
     let speedsOk = prevSpeed >= config.minSpeedMps && currentSpeed >= config.minSpeedMps
-    if let omega {
+    if let omega = yaw.omega {
       let speed = (currentSpeed + prevSpeed) / 2
-      lateral = speed * omega
+      let nextLateral = speed * omega
+      if yaw.pathOnly {
+        pathOnlyLateral = true
+        let hasAcc = previous.accuracyM != nil || current.accuracyM != nil
+        let worstAcc = max(previous.accuracyM ?? 0, current.accuracyM ?? 0)
+        if hasAcc && worstAcc > harshyPathOnlyCornerMaxAccuracyM {
+          lateral = nil
+        } else if abs(nextLateral) > harshyPathOnlyLateralMaxMps2 {
+          lateral = nil
+        } else {
+          lateral = nextLateral
+        }
+      } else {
+        lateral = nextLateral
+      }
       if speedsOk {
-        yaw = abs(omega)
+        yawRate = abs(omega)
       }
     } else if speedsOk {
-      yaw = 0
+      yawRate = 0
     }
-    return (longitudinal, lateral, yaw)
+    return (longitudinal, lateral, yawRate, pathOnlyLateral)
   }
 
   private func meanVerticalGyro(fromT: Double, toT: Double) -> Double? {
@@ -410,16 +440,27 @@ public final class HarshyTripAnalyzer {
     let latAccel = lateralAccelMps2
     let cornering = moving && latAccel != nil && abs(latAccel!) >= config.harshCornerMps2
     if cornering, let latAccel {
-      if let event = maybeEmit(
-        type: harshyEventHarshCorner,
-        t: t,
-        peak: abs(latAccel),
-        threshold: config.harshCornerMps2,
-        location: loc,
-        speedMps: speed
-      ) {
+      let event: HarshyDrivingEvent?
+      if pathOnlyLateral {
+        event = resolvePathOnlyHarshCorner(t: t, location: loc, speedMps: speed)
+      } else {
+        event = maybeEmit(
+          type: harshyEventHarshCorner,
+          t: t,
+          peak: abs(latAccel),
+          threshold: config.harshCornerMps2,
+          location: loc,
+          speedMps: speed
+        )
+      }
+      if !pathOnlyLateral {
+        harshCornerHold = nil
+      }
+      if let event {
         emitted.append(event)
       }
+    } else {
+      harshCornerHold = nil
     }
     let yaw = yawRateRadps
     if let peak = resolveSwervePeak(t: t, speed: speed, cornering: cornering, yaw: yaw) {
@@ -527,6 +568,56 @@ public final class HarshyTripAnalyzer {
     var peak: Double
     var sign: Int?
     var headingAtStartDeg: Double?
+  }
+
+  /// Path-only harsh corners need same-sign lateral held with a real heading change.
+  private func resolvePathOnlyHarshCorner(
+    t: Double,
+    location loc: HarshyLocationSample?,
+    speedMps: Double?
+  ) -> HarshyDrivingEvent? {
+    guard let lateral = lateralAccelMps2, lateral != 0 else {
+      harshCornerHold = nil
+      return nil
+    }
+    let sign = lateral > 0 ? 1 : -1
+    let magnitude = abs(lateral)
+    guard let heading = latestPathHeadingDeg() else {
+      harshCornerHold = nil
+      return nil
+    }
+    if let hold = harshCornerHold, hold.sign == sign {
+      var updated = hold
+      updated.peak = max(hold.peak, magnitude)
+      harshCornerHold = updated
+      let heldMs = t - updated.sinceT
+      let movedM = distanceM - updated.sinceDistanceM
+      if heldMs < harshyHarshCornerHoldMs || movedM < harshyHarshCornerHoldMinM {
+        return nil
+      }
+      guard let startHeading = updated.headingAtStartDeg,
+        abs(harshyUnwrapDeltaDeg(fromDeg: startHeading, toDeg: heading)) >= harshyHarshCornerMinTurnDeg
+      else {
+        return nil
+      }
+      harshCornerHold = nil
+      return maybeEmit(
+        type: harshyEventHarshCorner,
+        t: t,
+        peak: updated.peak,
+        threshold: config.harshCornerMps2,
+        location: loc,
+        speedMps: speedMps
+      )
+    }
+    harshCornerHold = SmoothHold(
+      sinceT: t,
+      sinceDistanceM: distanceM,
+      peak: magnitude,
+      sign: sign,
+      headingAtStartDeg: heading
+    )
+    return nil
   }
 
   private func latestPathHeadingDeg() -> Double? {

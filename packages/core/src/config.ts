@@ -103,6 +103,28 @@ export const SMOOTH_GAP_M = 400;
 export const SMOOTH_CORNER_MIN_TURN_DEG = 15;
 
 /**
+ * Path-only harsh corners (no chip/gyro confirm) need the same-sign band held this long
+ * with a real heading change — one GPS zig-zag must not score as heavy.
+ */
+export const HARSH_CORNER_HOLD_MS = 1000;
+
+export const HARSH_CORNER_HOLD_MIN_M = 8;
+
+/** Net track heading during a path-only harsh corner hold. */
+export const HARSH_CORNER_MIN_TURN_DEG = 20;
+
+/**
+ * When lateral comes only from the GPS path, ignore it if either fix is poorer than this.
+ * Chip/gyro-confirmed yaw is not gated here.
+ */
+export const PATH_ONLY_CORNER_MAX_ACCURACY_M = 15;
+
+/**
+ * Path-only lateral above this (~0.6 g) is treated as GPS noise, not a vehicle turn.
+ */
+export const PATH_ONLY_LATERAL_MAX_MPS2 = 6;
+
+/**
  * Flat credit before the ½ factor. At the 5 km reference that is +0.8.
  * The severity curve does not apply.
  */

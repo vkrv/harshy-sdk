@@ -1,6 +1,11 @@
 import { tagCompoundOverlaps } from "./compound.js";
 import {
   mergeDetectorConfig,
+  HARSH_CORNER_HOLD_MIN_M,
+  HARSH_CORNER_HOLD_MS,
+  HARSH_CORNER_MIN_TURN_DEG,
+  PATH_ONLY_CORNER_MAX_ACCURACY_M,
+  PATH_ONLY_LATERAL_MAX_MPS2,
   SCORE_EXPOSURE_MAX,
   SCORE_EXPOSURE_MIN,
   SCORE_MAX,
@@ -20,7 +25,8 @@ import {
 } from "./drivePath.js";
 import {
   clamp,
-  confirmedYawRadps,
+  confirmedYawDetail,
+  DERIVED_COURSE_MIN_M,
   derivedCourseDeg,
   derivedSpeedMps,
   haversineM,
@@ -121,6 +127,12 @@ type AnalyzerState = {
   lastEventAt: Partial<Record<DrivingEventType, number>>;
   lastEventLevel: Partial<Record<DrivingEventType, HarshEventLevel>>;
   smoothHold: Partial<Record<SmoothDrivingEventType, SmoothHold>>;
+  /**
+   * Path-only harsh corner candidate. Chip/gyro-confirmed laterals emit without this hold.
+   */
+  harshCornerHold: SmoothHold | null;
+  /** Latest GPS lateral came from path heading without chip/gyro confirm. */
+  pathOnlyLateral: boolean;
   /** Trip distance when this type last earned a credit. */
   smoothCreditAtM: Partial<Record<SmoothDrivingEventType, number>>;
   /** 0-based kilometre indexes that contain a harsh driving event. */
@@ -269,11 +281,12 @@ function gpsWindowAccel(state: AnalyzerState): {
   longitudinal: number | null;
   lateral: number | null;
   yawRateRadps: number | null;
+  pathOnlyLateral: boolean;
 } {
   const { gpsAccelWindowMs } = state.config;
   const current = state.lastGoodLocation;
   if (!current || current.speedMps == null) {
-    return { longitudinal: null, lateral: null, yawRateRadps: null };
+    return { longitudinal: null, lateral: null, yawRateRadps: null, pathOnlyLateral: false };
   }
 
   let previous: LocationSample | null = null;
@@ -293,43 +306,68 @@ function gpsWindowAccel(state: AnalyzerState): {
   }
 
   if (!previous || previous.speedMps == null) {
-    return { longitudinal: null, lateral: null, yawRateRadps: null };
+    return { longitudinal: null, lateral: null, yawRateRadps: null, pathOnlyLateral: false };
   }
 
   const dtSec = (current.t - previous.t) / 1000;
   if (dtSec < GPS_ACCEL_MIN_DT_SEC || dtSec > GPS_ACCEL_MAX_DT_SEC) {
-    return { longitudinal: null, lateral: null, yawRateRadps: null };
+    return { longitudinal: null, lateral: null, yawRateRadps: null, pathOnlyLateral: false };
   }
 
   const longitudinal = (current.speedMps - previous.speedMps) / dtSec;
   const previousIndex = state.location.lastIndexOf(previous);
   const before = previousIndex > 0 ? state.location[previousIndex - 1] : null;
-  const omega = confirmedYawRadps({
+  const pathMinM = pathBearingMinM(previous.accuracyM, current.accuracyM);
+  const yaw = confirmedYawDetail({
     dtSec,
     chipFromDeg: previous.courseDeg,
     chipToDeg: current.courseDeg,
-    pathFromDeg: pathBearingDeg(before, previous),
-    pathToDeg: pathBearingDeg(previous, current),
+    pathFromDeg: pathBearingDeg(before, previous, pathMinM),
+    pathToDeg: pathBearingDeg(previous, current, pathMinM),
     verticalGyroRadps: meanVerticalGyro(state, previous.t, current.t),
     phoneHandheld: state.openHandheld != null,
   });
   let lateral: number | null = null;
   let yawRateRadps: number | null = null;
+  let pathOnlyLateral = false;
   const speedsOk =
     previous.speedMps >= state.config.minSpeedMps &&
     current.speedMps >= state.config.minSpeedMps;
-  if (omega != null) {
+  if (yaw.omega != null) {
     const speed = (current.speedMps + previous.speedMps) / 2;
-    lateral = speed * omega;
+    const nextLateral = speed * yaw.omega;
+    if (yaw.pathOnly) {
+      pathOnlyLateral = true;
+      const hasAcc = previous.accuracyM != null || current.accuracyM != null;
+      const worstAcc = Math.max(previous.accuracyM ?? 0, current.accuracyM ?? 0);
+      if (hasAcc && worstAcc > PATH_ONLY_CORNER_MAX_ACCURACY_M) {
+        lateral = null;
+      } else if (Math.abs(nextLateral) > PATH_ONLY_LATERAL_MAX_MPS2) {
+        lateral = null;
+      } else {
+        lateral = nextLateral;
+      }
+    } else {
+      lateral = nextLateral;
+    }
     if (speedsOk) {
-      yawRateRadps = Math.abs(omega);
+      yawRateRadps = Math.abs(yaw.omega);
     }
   } else if (speedsOk) {
     // No heading signal — treat as straight so the next flick has an onset baseline.
     yawRateRadps = 0;
   }
 
-  return { longitudinal, lateral, yawRateRadps };
+  return { longitudinal, lateral, yawRateRadps, pathOnlyLateral };
+}
+
+/** Path chords shorter than accuracy noise are not a reliable heading. */
+function pathBearingMinM(prevAccuracyM: number | null, currAccuracyM: number | null): number {
+  const worst = Math.max(prevAccuracyM ?? 0, currAccuracyM ?? 0);
+  if (worst <= 0) {
+    return DERIVED_COURSE_MIN_M;
+  }
+  return Math.max(DERIVED_COURSE_MIN_M, Math.min(worst * 0.5, 15));
 }
 
 function meanVerticalGyro(state: AnalyzerState, fromT: number, toT: number): number | null {
@@ -476,18 +514,25 @@ function detectFromMotion(
     state.lateralAccelMps2 != null &&
     Math.abs(state.lateralAccelMps2) >= state.config.harshCornerMps2;
   if (cornering && state.lateralAccelMps2 != null) {
-    const event = maybeEmit(
-      state,
-      "harsh_corner",
-      t,
-      Math.abs(state.lateralAccelMps2),
-      state.config.harshCornerMps2,
-      location,
-      speed,
-    );
+    const event = state.pathOnlyLateral
+      ? resolvePathOnlyHarshCorner(state, t, location, speed)
+      : maybeEmit(
+          state,
+          "harsh_corner",
+          t,
+          Math.abs(state.lateralAccelMps2),
+          state.config.harshCornerMps2,
+          location,
+          speed,
+        );
+    if (!state.pathOnlyLateral) {
+      state.harshCornerHold = null;
+    }
     if (event) {
       emitted.push(event);
     }
+  } else {
+    state.harshCornerHold = null;
   }
 
   const yaw = state.yawRateRadps;
@@ -715,6 +760,64 @@ function latestPathHeadingDeg(state: AnalyzerState): number | null {
     }
   }
   return null;
+}
+
+/**
+ * Path-only harsh corners need same-sign lateral held with a real heading change.
+ * Zig-zag GPS at the start of a trip flips sign and never commits.
+ */
+function resolvePathOnlyHarshCorner(
+  state: AnalyzerState,
+  t: number,
+  location: LocationSample | null,
+  speed: number | null,
+): DrivingEvent | null {
+  const lateral = state.lateralAccelMps2;
+  if (lateral == null || lateral === 0) {
+    state.harshCornerHold = null;
+    return null;
+  }
+  const sign = lateral > 0 ? 1 : -1;
+  const magnitude = Math.abs(lateral);
+  const heading = latestPathHeadingDeg(state);
+  if (heading == null) {
+    state.harshCornerHold = null;
+    return null;
+  }
+  const hold = state.harshCornerHold;
+  if (!hold || hold.sign !== sign) {
+    state.harshCornerHold = {
+      sinceT: t,
+      sinceDistanceM: state.distanceM,
+      peak: magnitude,
+      sign,
+      headingAtStartDeg: heading,
+    };
+    return null;
+  }
+  hold.peak = Math.max(hold.peak, magnitude);
+  const heldMs = t - hold.sinceT;
+  const movedM = state.distanceM - hold.sinceDistanceM;
+  if (heldMs < HARSH_CORNER_HOLD_MS || movedM < HARSH_CORNER_HOLD_MIN_M) {
+    return null;
+  }
+  const startHeading = hold.headingAtStartDeg;
+  if (
+    startHeading == null ||
+    Math.abs(unwrapDeltaDeg(startHeading, heading)) < HARSH_CORNER_MIN_TURN_DEG
+  ) {
+    return null;
+  }
+  state.harshCornerHold = null;
+  return maybeEmit(
+    state,
+    "harsh_corner",
+    t,
+    hold.peak,
+    state.config.harshCornerMps2,
+    location,
+    speed,
+  );
 }
 
 function updateSmoothCredits(
@@ -1199,6 +1302,8 @@ export function createTripAnalyzer(
     lastEventAt: {},
     lastEventLevel: {},
     smoothHold: {},
+    harshCornerHold: null,
+    pathOnlyLateral: false,
     smoothCreditAtM: {},
     spoiledKm: new Set(),
     awardedKm: 0,
@@ -1233,7 +1338,9 @@ export function createTripAnalyzer(
     const withRoad: LocationSample = {
       ...sample,
       speedMps: derivedSpeedMps(state.lastGoodLocation, sample) ?? sample.speedMps,
-      courseDeg: derivedCourseDeg(state.lastGoodLocation, sample),
+      // Keep the OS chip course as-is. Filling from the path made every yaw look
+      // chip-confirmed and defeated path-only GPS noise gates.
+      courseDeg: sample.courseDeg,
       roadRmsMps2:
         sample.roadRmsMps2 ??
         roadRmsForLocation(sample, state.imu, {
@@ -1245,11 +1352,19 @@ export function createTripAnalyzer(
     state.location.push(withRoad);
     trimRingBuffer(state.location, MAX_LOCATION_SAMPLES);
     if (locationUsable(withRoad, state.config)) {
-      if (state.lastGoodLocation) {
-        state.distanceM += haversineM(state.lastGoodLocation, withRoad);
+      const prevGood = state.lastGoodLocation;
+      if (prevGood) {
+        state.distanceM += haversineM(prevGood, withRoad);
       }
       state.lastGoodLocation = withRoad;
-      state.heading = advanceHeadingFilter(state.heading, withRoad, state.config.minSpeedMps);
+      state.heading = advanceHeadingFilter(
+        state.heading,
+        {
+          ...withRoad,
+          courseDeg: derivedCourseDeg(prevGood, sample),
+        },
+        state.config.minSpeedMps,
+      );
       if (withRoad.speedMps != null) {
         state.speedSum += withRoad.speedMps;
         state.speedCount += 1;
@@ -1264,6 +1379,7 @@ export function createTripAnalyzer(
     state.longitudinalAccelMps2 = accel.longitudinal;
     state.lateralAccelMps2 = accel.lateral;
     state.yawRateRadps = accel.yawRateRadps;
+    state.pathOnlyLateral = accel.pathOnlyLateral;
     const yaw = accel.yawRateRadps;
     state.yawJerkRadps2 =
       yaw == null

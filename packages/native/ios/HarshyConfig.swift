@@ -37,6 +37,17 @@ public let harshySmoothGapM = 400.0
 public let harshySmoothCornerMinTurnDeg = 15.0
 public let harshySmoothCreditWeight = 1.6
 
+/** Path-only harsh corners need same-sign lateral held this long with a real turn. */
+public let harshyHarshCornerHoldMs = 1000.0
+public let harshyHarshCornerHoldMinM = 8.0
+public let harshyHarshCornerMinTurnDeg = 20.0
+
+/** Path-only lateral ignored when either fix is poorer than this. */
+public let harshyPathOnlyCornerMaxAccuracyM = 15.0
+
+/** Path-only lateral above this (~0.6 g) is GPS noise, not a vehicle turn. */
+public let harshyPathOnlyLateralMaxMps2 = 6.0
+
 public struct HarshyDetectorScoreWeights: Equatable, Sendable {
   public var start: Double
   public var harshAccel: Double

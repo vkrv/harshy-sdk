@@ -145,8 +145,11 @@ function gyroConfirmsChipYaw(
  * steps are long enough to have one. A chip course that disagrees with that
  * track counts only when a mounted phone is rotating about gravity with it.
  * With no track heading, the chip course needs that same gyro confirmation.
+ *
+ * `pathOnly` is true when the result is path heading without chip agreement
+ * or gyro confirmation — GPS polyline noise must not become a heavy corner.
  */
-export function confirmedYawRadps(input: {
+export function confirmedYawDetail(input: {
   dtSec: number;
   chipFromDeg: number | null;
   chipToDeg: number | null;
@@ -154,10 +157,10 @@ export function confirmedYawRadps(input: {
   pathToDeg: number | null;
   verticalGyroRadps: number | null;
   phoneHandheld: boolean;
-}): number | null {
+}): { omega: number | null; pathOnly: boolean } {
   const { dtSec } = input;
   if (!Number.isFinite(dtSec) || dtSec <= 0) {
-    return null;
+    return { omega: null, pathOnly: false };
   }
   const chipDelta =
     finiteDeg(input.chipFromDeg) && finiteDeg(input.chipToDeg)
@@ -172,20 +175,32 @@ export function confirmedYawRadps(input: {
 
   if (pathOmega != null && chipOmega != null && chipDelta != null && pathDelta != null) {
     if (Math.abs(chipDelta - pathDelta) <= YAW_COURSE_DISAGREE_DEG) {
-      return pathOmega;
+      return { omega: pathOmega, pathOnly: false };
     }
     if (gyroConfirmsChipYaw(chipOmega, input.verticalGyroRadps, input.phoneHandheld)) {
-      return chipOmega;
+      return { omega: chipOmega, pathOnly: false };
     }
-    return pathOmega;
+    return { omega: pathOmega, pathOnly: true };
   }
   if (pathOmega != null) {
-    return pathOmega;
+    return { omega: pathOmega, pathOnly: true };
   }
   if (chipOmega != null && gyroConfirmsChipYaw(chipOmega, input.verticalGyroRadps, input.phoneHandheld)) {
-    return chipOmega;
+    return { omega: chipOmega, pathOnly: false };
   }
-  return null;
+  return { omega: null, pathOnly: false };
+}
+
+export function confirmedYawRadps(input: {
+  dtSec: number;
+  chipFromDeg: number | null;
+  chipToDeg: number | null;
+  pathFromDeg: number | null;
+  pathToDeg: number | null;
+  verticalGyroRadps: number | null;
+  phoneHandheld: boolean;
+}): number | null {
+  return confirmedYawDetail(input).omega;
 }
 
 export function haversineM(

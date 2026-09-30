@@ -441,4 +441,71 @@ class TripAnalyzerTest {
     assertEquals(2.0, session.metrics.points, 0.001)
     assertEquals(100.0, session.metrics.score, 0.001)
   }
+
+  @Test
+  fun doesNotScorePathOnlyZigZagGpsAsHarshCornersAtTripStart() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig.DEFAULT,
+      "start-zigzag",
+      0.0,
+      DeviceInfo("android", "test"),
+    )
+    var lat = 59.4287
+    var lon = 24.7667
+    val headings = listOf(190.0, 261.0, 183.0, 215.0, 207.0, 222.0, 198.0, 205.0, 195.0, 202.0, 198.0)
+    val speed = 8.5
+    analyzer.pushLocation(
+      LocationSample(t = 0.0, lat = lat, lon = lon, speedMps = speed, courseDeg = null, accuracyM = 12.0),
+    )
+    headings.forEachIndexed { step, heading ->
+      val next = shift(lat, lon, heading, speed)
+      lat = next.first
+      lon = next.second
+      analyzer.pushLocation(
+        LocationSample(
+          t = (step + 1) * 1000.0,
+          lat = lat,
+          lon = lon,
+          speedMps = speed,
+          courseDeg = null,
+          accuracyM = 12.0 + (step % 3) * 2.0,
+        ),
+      )
+    }
+    assertFalse(analyzer.getEvents().any { it.type == EVENT_HARSH_CORNER })
+  }
+
+  @Test
+  fun stillScoresSustainedPathOnlyTurnAsHarshCornerWhenAccuracyIsGood() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig.DEFAULT,
+      "path-arc",
+      0.0,
+      DeviceInfo("android", "test"),
+    )
+    var lat = 59.4
+    var lon = 24.8
+    val speed = 10.0
+    var heading = 0.0
+    analyzer.pushLocation(
+      LocationSample(t = 0.0, lat = lat, lon = lon, speedMps = speed, courseDeg = null, accuracyM = 5.0),
+    )
+    for (step in 1..8) {
+      heading += 25.0
+      val next = shift(lat, lon, heading, speed)
+      lat = next.first
+      lon = next.second
+      analyzer.pushLocation(
+        LocationSample(
+          t = step * 1000.0,
+          lat = lat,
+          lon = lon,
+          speedMps = speed,
+          courseDeg = null,
+          accuracyM = 5.0,
+        ),
+      )
+    }
+    assertTrue(analyzer.getEvents().any { it.type == EVENT_HARSH_CORNER })
+  }
 }

@@ -176,7 +176,17 @@ func harshyVerticalGyroRadps(gyro: HarshyVec3?, gravity: HarshyVec3?) -> Double?
   return about.isFinite ? about : nil
 }
 
-func harshyConfirmedYawRadps(
+struct HarshyConfirmedYaw {
+  let omega: Double?
+  let pathOnly: Bool
+}
+
+/**
+ * Yaw for corner/swerve. `pathOnly` is true when the result is path heading
+ * without chip agreement or gyro confirmation — GPS polyline noise must not
+ * become a heavy corner.
+ */
+func harshyConfirmedYawDetail(
   dtSec: Double,
   chipFromDeg: Double?,
   chipToDeg: Double?,
@@ -184,8 +194,8 @@ func harshyConfirmedYawRadps(
   pathToDeg: Double?,
   verticalGyroRadps: Double?,
   phoneHandheld: Bool
-) -> Double? {
-  guard dtSec.isFinite, dtSec > 0 else { return nil }
+) -> HarshyConfirmedYaw {
+  guard dtSec.isFinite, dtSec > 0 else { return HarshyConfirmedYaw(omega: nil, pathOnly: false) }
   let chipDelta: Double? = {
     guard let chipFromDeg, let chipToDeg, chipFromDeg.isFinite, chipToDeg.isFinite else { return nil }
     return harshyUnwrapDeltaDeg(fromDeg: chipFromDeg, toDeg: chipToDeg)
@@ -198,18 +208,45 @@ func harshyConfirmedYawRadps(
   let pathOmega = pathDelta.map { harshyToRad($0) / dtSec }
   if let pathOmega, let chipOmega, let chipDelta, let pathDelta {
     if abs(chipDelta - pathDelta) <= harshyYawCourseDisagreeDeg {
-      return pathOmega
+      return HarshyConfirmedYaw(omega: pathOmega, pathOnly: false)
     }
     if harshyGyroConfirmsChipYaw(chipOmega, gyro: verticalGyroRadps, phoneHandheld: phoneHandheld) {
-      return chipOmega
+      return HarshyConfirmedYaw(omega: chipOmega, pathOnly: false)
     }
-    return pathOmega
+    return HarshyConfirmedYaw(omega: pathOmega, pathOnly: true)
   }
-  if let pathOmega { return pathOmega }
+  if let pathOmega { return HarshyConfirmedYaw(omega: pathOmega, pathOnly: true) }
   if let chipOmega, harshyGyroConfirmsChipYaw(chipOmega, gyro: verticalGyroRadps, phoneHandheld: phoneHandheld) {
-    return chipOmega
+    return HarshyConfirmedYaw(omega: chipOmega, pathOnly: false)
   }
-  return nil
+  return HarshyConfirmedYaw(omega: nil, pathOnly: false)
+}
+
+func harshyConfirmedYawRadps(
+  dtSec: Double,
+  chipFromDeg: Double?,
+  chipToDeg: Double?,
+  pathFromDeg: Double?,
+  pathToDeg: Double?,
+  verticalGyroRadps: Double?,
+  phoneHandheld: Bool
+) -> Double? {
+  harshyConfirmedYawDetail(
+    dtSec: dtSec,
+    chipFromDeg: chipFromDeg,
+    chipToDeg: chipToDeg,
+    pathFromDeg: pathFromDeg,
+    pathToDeg: pathToDeg,
+    verticalGyroRadps: verticalGyroRadps,
+    phoneHandheld: phoneHandheld
+  ).omega
+}
+
+/** Path chords shorter than accuracy noise are not a reliable heading. */
+func harshyPathBearingMinM(prevAccuracyM: Double?, currAccuracyM: Double?) -> Double {
+  let worst = max(prevAccuracyM ?? 0, currAccuracyM ?? 0)
+  if worst <= 0 { return harshyDerivedCourseMinM }
+  return max(harshyDerivedCourseMinM, min(worst * 0.5, 15))
 }
 
 private func harshyGyroConfirmsChipYaw(

@@ -208,7 +208,7 @@ class HarshyClient @JvmOverloads constructor(
     synchronized(lock) {
       detectorConfig = merged
       sessionId = id
-      analyzer = TripAnalyzer(merged, id, startedAtMs, device, trigger)
+      analyzer = TripAnalyzer(merged, id, startedAtMs, device, trigger, native)
       lastRaw = RawTrip(
         location = mutableListOf(),
         imu = mutableListOf(),

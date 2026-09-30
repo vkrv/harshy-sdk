@@ -104,7 +104,7 @@ public final class HarshyClient: HarshyEngine.Listener {
     lock.lock()
     detectorConfig = merged
     sessionId = id
-    analyzer = HarshyTripAnalyzer(config: merged, sessionId: id, startedAtMs: startedAtMs, device: device, trigger: trigger)
+    analyzer = HarshyTripAnalyzer(config: merged, sessionId: id, startedAtMs: startedAtMs, device: device, trigger: trigger, capture: native)
     lastRaw = RawTrip(
       location: [],
       imu: [],

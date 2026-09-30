@@ -10,6 +10,7 @@ public final class HarshyTripAnalyzer {
   public let startedAtMs: Double
   public let device: HarshyDeviceInfo
   public let trigger: String
+  public let capture: HarshyNativeStartOptions?
 
   private var config: HarshyDetectorConfig
   private var location: [HarshyLocationSample] = []
@@ -51,13 +52,15 @@ public final class HarshyTripAnalyzer {
     sessionId: String,
     startedAtMs: Double,
     device: HarshyDeviceInfo,
-    trigger: String = "manual"
+    trigger: String = "manual",
+    capture: HarshyNativeStartOptions? = nil
   ) {
     self.config = harshyMergeDetectorConfig(config)
     self.sessionId = sessionId
     self.startedAtMs = startedAtMs
     self.device = device
     self.trigger = harshyParseTripTrigger(trigger)
+    self.capture = capture
   }
 
   public func setConfig(_ next: HarshyDetectorConfig) {
@@ -179,7 +182,8 @@ public final class HarshyTripAnalyzer {
       events: events,
       metrics: summarizeTrip(endedAtMs),
       device: device,
-      trigger: trigger
+      trigger: trigger,
+      capture: capture
     )
   }
 
@@ -914,9 +918,10 @@ public func harshyCreateTripAnalyzer(
   sessionId: String,
   startedAtMs: Double,
   device: HarshyDeviceInfo,
-  trigger: String = "manual"
+  trigger: String = "manual",
+  capture: HarshyNativeStartOptions? = nil
 ) -> HarshyTripAnalyzer {
-  HarshyTripAnalyzer(config: config, sessionId: sessionId, startedAtMs: startedAtMs, device: device, trigger: trigger)
+  HarshyTripAnalyzer(config: config, sessionId: sessionId, startedAtMs: startedAtMs, device: device, trigger: trigger, capture: capture)
 }
 
 public func harshyScoreExposureScale(
@@ -990,14 +995,16 @@ public func harshyAnalyzeTrip(
   endedAtMs: Double,
   device: HarshyDeviceInfo,
   config: HarshyDetectorConfig? = nil,
-  trigger: String = "manual"
+  trigger: String = "manual",
+  capture: HarshyNativeStartOptions? = nil
 ) -> HarshySessionExport {
   let analyzer = harshyCreateTripAnalyzer(
     config: config,
     sessionId: sessionId,
     startedAtMs: startedAtMs,
     device: device,
-    trigger: trigger
+    trigger: trigger,
+    capture: capture
   )
   let locs = location.sorted { $0.t < $1.t }
   let imus = imu.sorted { $0.t < $1.t }

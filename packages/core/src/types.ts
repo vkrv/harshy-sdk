@@ -266,6 +266,8 @@ export type SessionExport = {
    * Absent on pre-auto-trip JSON (`schemaVersion` stays 1).
    */
   trigger?: TripTrigger;
+  /** Original native capture options used to start the trip. */
+  capture?: NativeStartOptions;
 }
 
 export type UploadAdapter = {

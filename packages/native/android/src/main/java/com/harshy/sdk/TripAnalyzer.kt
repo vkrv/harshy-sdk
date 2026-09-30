@@ -15,6 +15,7 @@ class TripAnalyzer(
   val startedAtMs: Double,
   val device: DeviceInfo,
   val trigger: String = "manual",
+  val capture: NativeStartOptions? = null,
 ) {
   private var config: DetectorConfig = mergeDetectorConfig(configInput)
   private val location = mutableListOf<LocationSample>()
@@ -167,6 +168,7 @@ class TripAnalyzer(
       metrics = summarizeTrip(endedAtMs),
       device = device,
       trigger = trigger,
+      capture = capture,
     )
   }
 
@@ -880,8 +882,9 @@ fun createTripAnalyzer(
   startedAtMs: Double,
   device: DeviceInfo,
   trigger: String = "manual",
+  capture: NativeStartOptions? = null,
 ): TripAnalyzer {
-  return TripAnalyzer(config, sessionId, startedAtMs, device, trigger)
+  return TripAnalyzer(config, sessionId, startedAtMs, device, trigger, capture)
 }
 
 @Suppress("UNUSED_PARAMETER")
@@ -943,8 +946,9 @@ fun analyzeTrip(
   device: DeviceInfo,
   config: DetectorConfig? = null,
   trigger: String = "manual",
+  capture: NativeStartOptions? = null,
 ): SessionExport {
-  val analyzer = createTripAnalyzer(config, sessionId, startedAtMs, device, trigger)
+  val analyzer = createTripAnalyzer(config, sessionId, startedAtMs, device, trigger, capture)
   val locs = location.sortedBy { it.t }
   val imus = imu.sortedBy { it.t }
   var li = 0

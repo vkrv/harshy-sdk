@@ -399,6 +399,36 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertEqual(session.toJSONObject()["trigger"] as? String, "auto")
   }
 
+  func testSessionJsonIncludesCapture() {
+    let session = harshyAnalyzeTrip(
+      location: [loc(0, speedMps: 5)],
+      imu: [],
+      sessionId: "cap-1",
+      startedAtMs: 0,
+      endedAtMs: 1000,
+      device: HarshyDeviceInfo(platform: "ios", model: "test"),
+      trigger: "auto",
+      capture: HarshyNativeStartOptions(imuHz: 25, locationIntervalMs: 1000, background: false, trigger: "auto")
+    )
+    let capture = session.toJSONObject()["capture"] as? [String: Any]
+    XCTAssertEqual(capture?["imuHz"] as? Int, 25)
+    XCTAssertEqual(capture?["locationIntervalMs"] as? Int, 1000)
+    XCTAssertEqual(capture?["background"] as? Bool, false)
+    XCTAssertEqual(capture?["trigger"] as? String, "auto")
+  }
+
+  func testSessionJsonOmitsCaptureWhenAbsent() {
+    let session = harshyAnalyzeTrip(
+      location: [loc(0, speedMps: 5)],
+      imu: [],
+      sessionId: "cap-2",
+      startedAtMs: 0,
+      endedAtMs: 1000,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    XCTAssertNil(session.toJSONObject()["capture"])
+  }
+
   func testRecordsOneGentleAccelThenWaits() {
     let analyzer = harshyCreateTripAnalyzer(
       config: nil,

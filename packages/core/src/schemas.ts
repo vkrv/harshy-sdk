@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { DEFAULT_DETECTOR_CONFIG, mergeDetectorConfig, relativeScore } from "./config.js";
+import { DEFAULT_DETECTOR_CONFIG, mergeDetectorConfig, mergeNativeStartOptions, relativeScore } from "./config.js";
 import { DEFAULT_HARSH_HEAVY_X, DEFAULT_HARSH_MEDIUM_X } from "./harsh.js";
 import type { DetectorConfig, SessionExport } from "./types.js";
 
@@ -156,6 +156,16 @@ export const detectorConfigSchema = z.object({
 
 export const tripTriggerSchema = z.enum(["manual", "auto"]);
 
+/** Partial capture blocks parse; missing fields fill from DEFAULT_NATIVE_START_OPTIONS. */
+export const nativeStartOptionsSchema = z
+  .object({
+    imuHz: z.number().optional(),
+    locationIntervalMs: z.number().optional(),
+    background: z.boolean().optional(),
+    trigger: tripTriggerSchema.optional(),
+  })
+  .transform((value) => mergeNativeStartOptions(value));
+
 export const sessionExportSchema = z.object({
   schemaVersion: z.literal(1),
   sessionId: z.string(),
@@ -203,6 +213,8 @@ export const sessionExportSchema = z.object({
   }),
   /** Pre-auto-trip JSON omits this; fill manual so `schemaVersion` stays 1. */
   trigger: tripTriggerSchema.default("manual"),
+  /** Original native capture options used to start the trip. Absent on pre-capture JSON. */
+  capture: nativeStartOptionsSchema.optional(),
 });
 
 export function parseDetectorConfig(input: unknown): DetectorConfig {

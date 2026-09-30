@@ -92,6 +92,8 @@ export type EngineSession = {
   location: LocationSample[];
   imu: ImuSample[];
   trigger?: TripTrigger;
+  /** Capture options that started this trip (from the native journal / engine). */
+  capture?: NativeStartOptions;
 };
 
 export type SensorEngine = {

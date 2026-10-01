@@ -147,7 +147,7 @@ export const DEFAULT_DETECTOR_CONFIG: DetectorConfig = {
   speedingExitX: 0.95,
   minSpeedMps: 2,
   /** Same-type peaks within this window upgrade one event instead of stacking. */
-  cooldownMs: 3500,
+  cooldownMs: 4500,
   compoundWindowMs: 3500,
   /** Ignore IMU jerk after start so button haptics / handling the phone are not scored. */
   jerkSettleMs: 1500,

@@ -92,7 +92,7 @@ data class DetectorConfig(
   val speedingMps: Double? = null,
   val speedingExitX: Double = 0.95,
   val minSpeedMps: Double = 2.0,
-  val cooldownMs: Double = 3500.0,
+  val cooldownMs: Double = 4500.0,
   val compoundWindowMs: Double = 3500.0,
   val jerkSettleMs: Double = 1500.0,
   val gpsAccelWindowMs: Double = 1000.0,

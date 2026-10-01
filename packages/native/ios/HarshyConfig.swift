@@ -157,7 +157,7 @@ public struct HarshyDetectorConfig: Equatable, Sendable {
     speedingMps: Double? = nil,
     speedingExitX: Double = 0.95,
     minSpeedMps: Double = 2,
-    cooldownMs: Double = 3500,
+    cooldownMs: Double = 4500,
     compoundWindowMs: Double = 3500,
     jerkSettleMs: Double = 1500,
     gpsAccelWindowMs: Double = 1000,

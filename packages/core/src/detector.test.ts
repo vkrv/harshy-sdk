@@ -675,7 +675,7 @@ describe("detector", () => {
 
   it("merges same-type peaks a few seconds apart into one event", () => {
     const analyzer = createTripAnalyzer(
-      { cooldownMs: 3500, compoundWindowMs: 3500 },
+      { cooldownMs: 4500, compoundWindowMs: 3500 },
       {
         sessionId: "coalesce",
         startedAtMs: 0,

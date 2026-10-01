@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  confirmedYawDetail,
   confirmedYawRadps,
   derivedCourseDeg,
   derivedSpeedMps,
@@ -56,19 +57,32 @@ describe("geo", () => {
     expect(derivedCourseDeg(null, east)).toBeNull();
   });
 
-  it("uses the track when the chip course agrees, and only a mounted gyro when it does not", () => {
+  it("uses the track when the chip course agrees, and only a mounted gyro clears pathOnly", () => {
     const turn = toRad(26);
-    expect(
-      confirmedYawRadps({
-        dtSec: 1,
-        chipFromDeg: 0,
-        chipToDeg: 26,
-        pathFromDeg: 0,
-        pathToDeg: 26,
-        verticalGyroRadps: null,
-        phoneHandheld: false,
-      }),
-    ).toBeCloseTo(turn);
+    // Chip echoing the path without gyro stays path-only (fused GPS bearing).
+    const echoed = confirmedYawDetail({
+      dtSec: 1,
+      chipFromDeg: 0,
+      chipToDeg: 26,
+      pathFromDeg: 0,
+      pathToDeg: 26,
+      verticalGyroRadps: null,
+      phoneHandheld: false,
+    });
+    expect(echoed.omega).toBeCloseTo(turn);
+    expect(echoed.pathOnly).toBe(true);
+
+    const gyroOk = confirmedYawDetail({
+      dtSec: 1,
+      chipFromDeg: 0,
+      chipToDeg: 26,
+      pathFromDeg: 0,
+      pathToDeg: 26,
+      verticalGyroRadps: turn,
+      phoneHandheld: false,
+    });
+    expect(gyroOk.omega).toBeCloseTo(turn);
+    expect(gyroOk.pathOnly).toBe(false);
 
     const straight = toRad(4);
     const glitch = toRad(unwrapDeltaDeg(240, 28));

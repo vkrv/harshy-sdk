@@ -344,17 +344,26 @@ describe("detector", () => {
       startedAtMs: 0,
       device: { platform: "web", model: "test" },
     });
-    const start = { lat: 59.46, lon: 24.82 };
-    const mid = destination(start.lat, start.lon, 0, 12);
-    const end = destination(mid.lat, mid.lon, 45, 7);
-    analyzer.pushLocation(placed(0, 12, 0, start.lat, start.lon));
-    analyzer.pushLocation(placed(1000, 12, 0, mid.lat, mid.lon));
-    const both = analyzer.pushLocation(placed(2000, 7, 45, end.lat, end.lon));
-    const types = new Set(both.newEvents.map((event) => event.type));
+    // Sustained path turn (no gyro) so path-only hold can commit the corner.
+    let lat = 59.46;
+    let lon = 24.82;
+    let heading = 0;
+    const speed = 12;
+    analyzer.pushLocation(placed(0, speed, heading, lat, lon));
+    for (let step = 1; step <= 4; step += 1) {
+      heading += 25;
+      const next = destination(lat, lon, heading, speed);
+      lat = next.lat;
+      lon = next.lon;
+      const sampleSpeed = step === 4 ? 7 : speed;
+      analyzer.pushLocation(placed(step * 1000, sampleSpeed, heading, lat, lon));
+    }
+    const events = analyzer.getEvents();
+    const types = new Set(events.map((event) => event.type));
     expect(types.has("harsh_brake")).toBe(true);
     expect(types.has("harsh_corner")).toBe(true);
-    const brake = both.newEvents.find((event) => event.type === "harsh_brake");
-    const corner = both.newEvents.find((event) => event.type === "harsh_corner");
+    const brake = events.find((event) => event.type === "harsh_brake");
+    const corner = events.find((event) => event.type === "harsh_corner");
     expect(brake?.overlaps).toContain("harsh_corner");
     expect(corner?.overlaps).toContain("harsh_brake");
 
@@ -520,6 +529,34 @@ describe("detector", () => {
         ...placed((step + 1) * 1000, speed, null, lat, lon),
         courseDeg: null,
         accuracyM: 12 + (step % 3) * 2,
+      });
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_corner")).toBe(false);
+  });
+
+  it("does not score zig-zag GPS when the chip course echoes the polyline", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "chip-echo-zigzag",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    // Fused GPS often reports bearing = path; without gyro that must stay path-only.
+    let lat = 59.4578;
+    let lon = 24.8249;
+    const headings = [100, 85, 103, 100, 101, 90, 83, 72, 69, 76, 63, 76, 71];
+    const speed = 11.5;
+    analyzer.pushLocation({
+      ...placed(0, speed, headings[0]!, lat, lon),
+      accuracyM: 6,
+    });
+    for (let step = 1; step < headings.length; step += 1) {
+      const heading = headings[step]!;
+      const next = destination(lat, lon, heading, speed);
+      lat = next.lat;
+      lon = next.lon;
+      analyzer.pushLocation({
+        ...placed(step * 1000, speed, heading, lat, lon),
+        accuracyM: 6,
       });
     }
     expect(analyzer.getEvents().some((event) => event.type === "harsh_corner")).toBe(false);

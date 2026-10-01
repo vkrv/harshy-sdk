@@ -115,9 +115,9 @@ internal data class ConfirmedYaw(
 )
 
 /**
- * Yaw for corner/swerve. `pathOnly` is true when the result is path heading
- * without chip agreement or gyro confirmation — GPS polyline noise must not
- * become a heavy corner.
+ * Yaw for corner/swerve. `pathOnly` is true unless a mounted gyro confirms the
+ * yaw. Chip↔path agreement alone is not enough — fused GPS bearing often
+ * echoes the polyline and would otherwise bypass path-only harsh-corner gates.
  */
 internal fun confirmedYawDetail(
   dtSec: Double,
@@ -145,7 +145,10 @@ internal fun confirmedYawDetail(
   val pathOmega = pathDelta?.let { toRad(it) / dtSec }
   if (pathOmega != null && chipOmega != null && chipDelta != null && pathDelta != null) {
     if (kotlin.math.abs(chipDelta - pathDelta) <= YAW_COURSE_DISAGREE_DEG) {
-      return ConfirmedYaw(pathOmega, false)
+      if (gyroConfirmsChipYaw(pathOmega, verticalGyroRadps, phoneHandheld)) {
+        return ConfirmedYaw(pathOmega, false)
+      }
+      return ConfirmedYaw(pathOmega, true)
     }
     if (gyroConfirmsChipYaw(chipOmega, verticalGyroRadps, phoneHandheld)) {
       return ConfirmedYaw(chipOmega, false)

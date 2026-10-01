@@ -477,6 +477,39 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshCorner })
   }
 
+  func testDoesNotScoreZigZagGpsWhenChipCourseEchoesThePolyline() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "chip-echo-zigzag",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    var lat = 59.4578
+    var lon = 24.8249
+    let headings = [100.0, 85.0, 103.0, 100.0, 101.0, 90.0, 83.0, 72.0, 69.0, 76.0, 63.0, 76.0, 71.0]
+    let speed = 11.5
+    _ = analyzer.pushLocation(
+      HarshyLocationSample(t: 0, lat: lat, lon: lon, speedMps: speed, courseDeg: headings[0], accuracyM: 6)
+    )
+    for step in 1..<headings.count {
+      let heading = headings[step]
+      let next = shift(lat, lon, bearingDeg: heading, distanceM: speed)
+      lat = next.lat
+      lon = next.lon
+      _ = analyzer.pushLocation(
+        HarshyLocationSample(
+          t: Double(step) * 1000,
+          lat: lat,
+          lon: lon,
+          speedMps: speed,
+          courseDeg: heading,
+          accuracyM: 6
+        )
+      )
+    }
+    XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshCorner })
+  }
+
   func testStillScoresSustainedPathOnlyTurnAsHarshCornerWhenAccuracyIsGood() {
     let analyzer = harshyCreateTripAnalyzer(
       config: nil,

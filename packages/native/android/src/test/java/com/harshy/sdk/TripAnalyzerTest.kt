@@ -476,6 +476,40 @@ class TripAnalyzerTest {
   }
 
   @Test
+  fun doesNotScoreZigZagGpsWhenChipCourseEchoesThePolyline() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig.DEFAULT,
+      "chip-echo-zigzag",
+      0.0,
+      DeviceInfo("android", "test"),
+    )
+    var lat = 59.4578
+    var lon = 24.8249
+    val headings = listOf(100.0, 85.0, 103.0, 100.0, 101.0, 90.0, 83.0, 72.0, 69.0, 76.0, 63.0, 76.0, 71.0)
+    val speed = 11.5
+    analyzer.pushLocation(
+      LocationSample(t = 0.0, lat = lat, lon = lon, speedMps = speed, courseDeg = headings[0], accuracyM = 6.0),
+    )
+    for (step in 1 until headings.size) {
+      val heading = headings[step]
+      val next = shift(lat, lon, heading, speed)
+      lat = next.first
+      lon = next.second
+      analyzer.pushLocation(
+        LocationSample(
+          t = step * 1000.0,
+          lat = lat,
+          lon = lon,
+          speedMps = speed,
+          courseDeg = heading,
+          accuracyM = 6.0,
+        ),
+      )
+    }
+    assertFalse(analyzer.getEvents().any { it.type == EVENT_HARSH_CORNER })
+  }
+
+  @Test
   fun stillScoresSustainedPathOnlyTurnAsHarshCornerWhenAccuracyIsGood() {
     val analyzer = TripAnalyzer(
       DetectorConfig.DEFAULT,

@@ -146,8 +146,10 @@ function gyroConfirmsChipYaw(
  * track counts only when a mounted phone is rotating about gravity with it.
  * With no track heading, the chip course needs that same gyro confirmation.
  *
- * `pathOnly` is true when the result is path heading without chip agreement
- * or gyro confirmation — GPS polyline noise must not become a heavy corner.
+ * `pathOnly` is true unless a mounted gyro confirms the yaw. Chip↔path
+ * agreement alone is not enough — on Android fused GPS the chip bearing often
+ * echoes the polyline, so agreement would otherwise bypass path-only gates and
+ * score zig-zag noise as a harsh corner.
  */
 export function confirmedYawDetail(input: {
   dtSec: number;
@@ -175,7 +177,10 @@ export function confirmedYawDetail(input: {
 
   if (pathOmega != null && chipOmega != null && chipDelta != null && pathDelta != null) {
     if (Math.abs(chipDelta - pathDelta) <= YAW_COURSE_DISAGREE_DEG) {
-      return { omega: pathOmega, pathOnly: false };
+      if (gyroConfirmsChipYaw(pathOmega, input.verticalGyroRadps, input.phoneHandheld)) {
+        return { omega: pathOmega, pathOnly: false };
+      }
+      return { omega: pathOmega, pathOnly: true };
     }
     if (gyroConfirmsChipYaw(chipOmega, input.verticalGyroRadps, input.phoneHandheld)) {
       return { omega: chipOmega, pathOnly: false };

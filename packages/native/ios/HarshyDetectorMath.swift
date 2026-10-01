@@ -182,9 +182,9 @@ struct HarshyConfirmedYaw {
 }
 
 /**
- * Yaw for corner/swerve. `pathOnly` is true when the result is path heading
- * without chip agreement or gyro confirmation — GPS polyline noise must not
- * become a heavy corner.
+ * Yaw for corner/swerve. `pathOnly` is true unless a mounted gyro confirms the
+ * yaw. Chip↔path agreement alone is not enough — fused GPS bearing often
+ * echoes the polyline and would otherwise bypass path-only harsh-corner gates.
  */
 func harshyConfirmedYawDetail(
   dtSec: Double,
@@ -208,7 +208,10 @@ func harshyConfirmedYawDetail(
   let pathOmega = pathDelta.map { harshyToRad($0) / dtSec }
   if let pathOmega, let chipOmega, let chipDelta, let pathDelta {
     if abs(chipDelta - pathDelta) <= harshyYawCourseDisagreeDeg {
-      return HarshyConfirmedYaw(omega: pathOmega, pathOnly: false)
+      if harshyGyroConfirmsChipYaw(pathOmega, gyro: verticalGyroRadps, phoneHandheld: phoneHandheld) {
+        return HarshyConfirmedYaw(omega: pathOmega, pathOnly: false)
+      }
+      return HarshyConfirmedYaw(omega: pathOmega, pathOnly: true)
     }
     if harshyGyroConfirmsChipYaw(chipOmega, gyro: verticalGyroRadps, phoneHandheld: phoneHandheld) {
       return HarshyConfirmedYaw(omega: chipOmega, pathOnly: false)

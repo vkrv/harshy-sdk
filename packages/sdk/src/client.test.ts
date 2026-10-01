@@ -124,6 +124,7 @@ describe("Harshy SDK", () => {
     const session = await client.stop();
 
     expect(session.schemaVersion).toBe(1);
+    expect(session.sdkVersion).toBeDefined();
     expect(session.location.length).toBeGreaterThan(0);
     expect(client.getLiveLocation()).toEqual([]);
     expect(session.metrics.distanceM).toBeGreaterThan(0);

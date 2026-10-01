@@ -252,6 +252,11 @@ export type TripMetrics = {
 
 export type SessionExport = {
   schemaVersion: 1;
+  /**
+   * Monotonic Harshy SDK stamp (`HARSHY_SDK_VERSION`) that produced this file.
+   * Always set on new `analyzeTrip` / `stop()` output. Absent on older JSON.
+   */
+  sdkVersion?: number;
   sessionId: string;
   startedAt: string;
   endedAt: string | null;

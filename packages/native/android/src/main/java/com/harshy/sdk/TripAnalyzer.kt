@@ -168,6 +168,7 @@ class TripAnalyzer(
     )
     return SessionExport(
       schemaVersion = 1,
+      sdkVersion = HARSHY_SDK_VERSION,
       sessionId = sessionId,
       startedAt = isoFromEpochMs(startedAtMs),
       endedAt = isoFromEpochMs(endedAtMs),

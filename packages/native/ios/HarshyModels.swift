@@ -223,6 +223,7 @@ public final class HarshyDrivingEvent {
 
 public struct HarshySessionExport {
   public var schemaVersion: Int
+  public var sdkVersion: Int
   public var sessionId: String
   public var startedAt: String
   public var endedAt: String?

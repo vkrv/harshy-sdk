@@ -8,6 +8,7 @@ public extension HarshySessionExport {
   func toJSONObject() -> [String: Any] {
     var json: [String: Any] = [
       "schemaVersion": schemaVersion,
+      "sdkVersion": sdkVersion,
       "sessionId": sessionId,
       "startedAt": startedAt,
       "endedAt": endedAt ?? NSNull(),

@@ -75,6 +75,7 @@ data class TripMetrics(
 
 data class SessionExport(
   val schemaVersion: Int = 1,
+  val sdkVersion: Int = HARSHY_SDK_VERSION,
   val sessionId: String,
   val startedAt: String,
   val endedAt: String?,

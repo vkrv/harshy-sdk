@@ -17,6 +17,7 @@ import {
   SMOOTH_HOLD_MS,
   relativeScore,
 } from "./config.js";
+import { HARSHY_SDK_VERSION } from "./version.js";
 import {
   isSuspiciousSpeedLeap,
   lastLocationAnchor,
@@ -1457,6 +1458,7 @@ export function createTripAnalyzer(
       closeSpeedingSpan(state, ended);
       return {
         schemaVersion: 1,
+        sdkVersion: HARSHY_SDK_VERSION,
         sessionId: state.sessionId,
         startedAt: new Date(state.startedAtMs).toISOString(),
         endedAt: new Date(ended).toISOString(),

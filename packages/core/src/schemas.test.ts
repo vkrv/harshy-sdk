@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { parseDetectorConfig, parseSessionExport, sessionExportSchema } from "./schemas.js";
 import { analyzeTrip } from "./detector.js";
 import { generateSampleTrip } from "./simulate.js";
+import { parseDetectorConfig, parseSessionExport, sessionExportSchema } from "./schemas.js";
 import { uploadSession } from "./upload.js";
+import { HARSHY_SDK_VERSION } from "./version.js";
 
 describe("session contract", () => {
   it("validates a generated session with zod", () => {
@@ -116,6 +117,22 @@ describe("session contract", () => {
     expect(parsed.metrics.eventCounts.smooth_brake).toBe(0);
     expect(parsed.metrics.eventCounts.smooth_corner).toBe(0);
     expect(parsed.metrics.eventCounts.smooth_km).toBe(0);
+  });
+
+  it("stamps sdkVersion on new sessions and accepts older JSON without it", () => {
+    const trip = generateSampleTrip();
+    const session = analyzeTrip({
+      location: trip.location,
+      imu: trip.imu,
+      sessionId: trip.sessionId,
+      startedAtMs: trip.startedAtMs,
+      endedAtMs: trip.endedAtMs,
+      device: { platform: "web", model: "sim" },
+    });
+    expect(session.sdkVersion).toBe(HARSHY_SDK_VERSION);
+    expect(parseSessionExport(session).sdkVersion).toBe(HARSHY_SDK_VERSION);
+    const { sdkVersion: _v, ...legacy } = session;
+    expect(parseSessionExport(legacy).sdkVersion).toBeUndefined();
   });
 
   it("fills trigger=manual on older JSON and keeps schemaVersion 1", () => {

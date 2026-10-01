@@ -12,6 +12,7 @@ fun SessionExport.toJson(): String = toJsonObject().toString()
 fun SessionExport.toJsonObject(): JSONObject {
   val json = JSONObject()
   json.put("schemaVersion", schemaVersion)
+  json.put("sdkVersion", sdkVersion)
   json.put("sessionId", sessionId)
   json.put("startedAt", startedAt)
   json.put("endedAt", endedAt ?: JSONObject.NULL)

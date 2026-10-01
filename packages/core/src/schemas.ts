@@ -168,6 +168,8 @@ export const nativeStartOptionsSchema = z
 
 export const sessionExportSchema = z.object({
   schemaVersion: z.literal(1),
+  /** Absent on pre-stamp JSON. */
+  sdkVersion: z.number().int().positive().optional(),
   sessionId: z.string(),
   startedAt: z.string(),
   endedAt: z.string().nullable(),

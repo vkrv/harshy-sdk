@@ -182,6 +182,7 @@ public final class HarshyTripAnalyzer {
     )
     return HarshySessionExport(
       schemaVersion: 1,
+      sdkVersion: harshySdkVersion,
       sessionId: sessionId,
       startedAt: harshyIsoFromEpochMs(startedAtMs),
       endedAt: harshyIsoFromEpochMs(endedAtMs),

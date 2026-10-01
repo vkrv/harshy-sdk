@@ -384,6 +384,19 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertTrue(harshySpeedLeapHolds(anchor: from, leap: kept, next: still))
   }
 
+  func testSessionJsonIncludesSdkVersion() {
+    let session = harshyAnalyzeTrip(
+      location: [loc(0, speedMps: 5)],
+      imu: [],
+      sessionId: "sdk-ver",
+      startedAtMs: 0,
+      endedAtMs: 1000,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    XCTAssertEqual(session.sdkVersion, harshySdkVersion)
+    XCTAssertEqual(session.toJSONObject()["sdkVersion"] as? Int, harshySdkVersion)
+  }
+
   func testSessionJsonIncludesTrigger() {
     let session = harshyAnalyzeTrip(
       location: [loc(0, speedMps: 5)],

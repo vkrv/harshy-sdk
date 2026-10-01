@@ -378,6 +378,20 @@ class TripAnalyzerTest {
   }
 
   @Test
+  fun sessionJsonIncludesSdkVersion() {
+    val session = analyzeTrip(
+      location = listOf(loc(0.0, 5.0)),
+      imu = emptyList(),
+      sessionId = "sdk-ver",
+      startedAtMs = 0.0,
+      endedAtMs = 1000.0,
+      device = DeviceInfo("android", "test"),
+    )
+    assertEquals(HARSHY_SDK_VERSION, session.sdkVersion)
+    assertEquals(HARSHY_SDK_VERSION, session.toJsonObject().getInt("sdkVersion"))
+  }
+
+  @Test
   fun sessionJsonIncludesTrigger() {
     val session = analyzeTrip(
       location = listOf(loc(0.0, 5.0)),

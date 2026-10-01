@@ -225,7 +225,7 @@ await harshy.disarm();
 | Auto-stop trim | After commit, 10 min parked auto `stop()` ends the saved trip at the start of that dwell |
 | Manual wins | `start()` while Auto is on records `trigger: "manual"` and suppresses auto until `stop()` |
 | `source` vs `trigger` | `source` is native/simulated sensors; `trigger` is why the trip began |
-| Session JSON | Optional `trigger` on `schemaVersion: 1`; older files parse as `"manual"` |
+| Session JSON | Optional `trigger` on `schemaVersion: 1`; older files parse as `"manual"`. New files stamp monotonic `sdkVersion` (`HARSHY_SDK_VERSION`) |
 | Always required | Native `armWatch` throws without background / Always location; the client reverts to manual |
 
 `createNativeEngine()` implements `armWatch` / `disarmWatch` / `subscribeWatch`. Simulated engines omit them (`nativeWatch: false`) and will not auto-start.

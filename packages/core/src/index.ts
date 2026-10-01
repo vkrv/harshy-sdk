@@ -5,6 +5,7 @@ export {
   permissionLabel,
   permissionResult,
 } from "./permissions.js";
+export { HARSHY_SDK_VERSION } from "./version.js";
 export {
   DEFAULT_DETECTOR_CONFIG,
   DEFAULT_NATIVE_START_OPTIONS,

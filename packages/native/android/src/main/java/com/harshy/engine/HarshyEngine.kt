@@ -35,7 +35,8 @@ import java.util.function.Consumer
  * can construct this with an application [Context] and collect GPS + IMU.
  *
  * On Android the in-progress trip is journaled to disk and the location FGS
- * restores capture if the process is killed mid-drive.
+ * restores capture if the process is killed mid-drive. An armed MotionWatch
+ * persists a separate flag so “Waiting for a drive” survives the same kill.
  */
 class HarshyEngine(private val context: Context) : SensorEventListener, LocationListener {
   interface Listener {
@@ -51,6 +52,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
   private val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
   private val journal = TripJournal(context)
+  private val watchArmStore = WatchArmStore(context)
 
   private val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
   private val linearAcceleration = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
@@ -385,7 +387,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   /**
-   * Sparse OS watch for automatic trips. Must not start FGS, IMU, or the journal.
+   * Sparse OS watch for automatic trips. Starts the location FGS with
+   * “Waiting for a drive”. No IMU and no trip journal until [start].
    * No-op while a trip is running. Throws if Always / background location is missing.
    */
   fun armWatch() {
@@ -394,6 +397,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
         return
       }
       if (watching) {
+        watchArmStore.markArmed()
         return
       }
       val locationGranted = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) ||
@@ -412,6 +416,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       watching = true
       lastStepAtMs = null
       watchStartState = WatchStartGate.State()
+      watchArmStore.markArmed()
       startWatchLocked()
       startForeground()
     }
@@ -421,6 +426,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     synchronized(lifecycleLock) {
       val wasWatching = watching
       disarmWatchLocked()
+      watchArmStore.clear()
       if (wasWatching && !running) {
         stopForeground()
       }
@@ -428,6 +434,44 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   fun isWatching(): Boolean = watching
+
+  /**
+   * Resume an armed MotionWatch after process death when there is no trip journal.
+   * The sticky location FGS calls this with [fromService] = true so it does not nest
+   * another `startForegroundService`.
+   */
+  fun restoreWatchIfNeeded(fromService: Boolean = false): Boolean {
+    synchronized(lifecycleLock) {
+      if (!WatchArmRestore.shouldRestore(watchArmStore.isArmed(), running, watching)) {
+        return watching
+      }
+      val locationGranted = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) ||
+        hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+      if (!locationGranted) {
+        watchArmStore.clear()
+        return false
+      }
+      val backgroundGranted = if (Build.VERSION.SDK_INT < 29) {
+        locationGranted
+      } else {
+        hasPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+      }
+      if (!backgroundGranted) {
+        watchArmStore.clear()
+        return false
+      }
+      watching = true
+      lastStepAtMs = null
+      watchStartState = WatchStartGate.State()
+      startWatchLocked()
+      if (fromService) {
+        publishWatchNotification()
+      } else {
+        startForeground()
+      }
+      return true
+    }
+  }
 
   /** Called from [TripForegroundService] after `startForeground` succeeds. */
   fun markForegroundServiceStarted() {

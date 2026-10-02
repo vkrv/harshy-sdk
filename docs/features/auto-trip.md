@@ -132,7 +132,7 @@ Do not prompt from `arm()` itself — hosts call `requestPermissions()` first.
 
 1. Call **`recover()` before `arm()`** on launch so a live trip wins.
 2. A recovered trip uses existing Android journal + FGS restore. The journal stores `trigger`; older journals without it recover as `manual` (and `suppressed` if Auto is then armed). Auto trips replay journal GPS through probe-commit and `shouldEndTrip` so a parked dwell (or uncommitted warmup abort) survives process death.
-3. Watch is not a trip: process death while **armed** must not start FGS. Re-register the watch on process start (`arm()` after `recover()`).
+3. Watch is not a trip journal, but Android **does** persist that Auto was armed. When the sticky location FGS restarts after process death with no trip journal, it re-arms MotionWatch (“Waiting for a drive”) without waiting for JS. JS still calls `arm()` after `recover()` on a normal launch so the in-memory client matches. Turning Auto off calls `disarmWatch` and clears that flag.
 4. `recover()` must not invent a trip from watch state.
 
 ## SDK surface
@@ -171,7 +171,7 @@ await harshy.disarm();
 - `arm()` starts the Android watch location foreground service (“Waiting for a drive”), not the trip journal or iOS Live Activity
 - Auto start keeps that service, starts the journal / Live Activity; auto `stop` swaps the notice back and re-arms without `startForegroundService`
 - Manual Start while Armed suppresses until Stop
-- `recover()` mid-trip still attaches with the journaled `trigger`; armed-only process death does not restore a trip
+- `recover()` mid-trip still attaches with the journaled `trigger`; armed-only process death restores “Waiting for a drive” and MotionWatch from `harshy-watch/armed.json`, not a trip
 - Walk / bike with activity does not start; a false-start warmup aborts after ~30 s parked and is not persisted; parking 10+ min ends a committed auto trip and omits those parked minutes
 - Denied Always: `armWatch` fails without capturing
 

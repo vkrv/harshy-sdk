@@ -15,6 +15,10 @@ class TripForegroundService : Service() {
     try {
       val label = applicationInfo.loadLabel(packageManager)?.toString().orEmpty().ifBlank { "Apexmatic" }
       val engine = HarshyEngine.shared(this)
+      // Sticky restart after process death: restore watch preference before the first notice.
+      if (!engine.isRunning()) {
+        engine.restoreWatchIfNeeded(fromService = true)
+      }
       val notification = if (engine.isWatching() && !engine.isRunning()) {
         TripLiveDisplay.buildWatchNotification(this, label)
       } else {
@@ -42,8 +46,11 @@ class TripForegroundService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     return try {
       val engine = HarshyEngine.shared(this)
-      val restored = engine.restoreIfNeeded(fromService = true)
-      if (!restored && !engine.isRunning() && !engine.isWatching()) {
+      val restoredTrip = engine.restoreIfNeeded(fromService = true)
+      if (!restoredTrip && !engine.isRunning()) {
+        engine.restoreWatchIfNeeded(fromService = true)
+      }
+      if (!engine.isRunning() && !engine.isWatching()) {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
       }

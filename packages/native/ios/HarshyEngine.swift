@@ -393,6 +393,13 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
   }
 
   public func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    if let clError = error as? CLError, clError.code == .locationUnknown {
+      return
+    }
+    let nsError = error as NSError
+    if nsError.domain == kCLErrorDomain && nsError.code == CLError.locationUnknown.rawValue {
+      return
+    }
     if manager === watchManager {
       listener?.onError(["code": "watch", "message": error.localizedDescription])
       return

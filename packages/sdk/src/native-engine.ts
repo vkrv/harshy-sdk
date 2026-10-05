@@ -56,6 +56,13 @@ function toSession(raw: {
   };
 }
 
+function isTransientLocationError(error: { code: string; message: string }): boolean {
+  return (
+    error.message.includes("kCLErrorDomain error 0") ||
+    error.message.includes("kCLErrorLocationUnknown")
+  );
+}
+
 export function createNativeEngine(): SensorEngine {
   return {
     kind: "native",
@@ -120,7 +127,9 @@ export function createNativeEngine(): SensorEngine {
         }
       });
       const errorSub = HarshyNative.addListener("onError", (error) => {
-        listeners.onError(error);
+        if (!isTransientLocationError(error)) {
+          listeners.onError(error);
+        }
       });
       return () => {
         locationSub.remove();
@@ -142,7 +151,9 @@ export function createNativeEngine(): SensorEngine {
         }
       });
       const errorSub = HarshyNative.addListener("onError", (error) => {
-        listeners.onError?.(error);
+        if (!isTransientLocationError(error)) {
+          listeners.onError?.(error);
+        }
       });
       const stateSub = HarshyNative.addListener("onState", (state) => {
         if (state.running) {

@@ -46,6 +46,8 @@ class TripAnalyzer(
   private var swerveElevatedPeak = 0.0
   private var swerveElevatedRiseJerk = 0.0
   private var swerveElevatedAtSpeed: Double? = null
+  /** True if any elevated sample lacked gyro confirmation. */
+  private var swerveElevatedPathOnly = false
   private var maxSpeedMps: Double? = null
   private var speedSum = 0.0
   private var speedCount = 0
@@ -507,6 +509,7 @@ class TripAnalyzer(
       swerveElevatedPeak = 0.0
       swerveElevatedRiseJerk = 0.0
       swerveElevatedAtSpeed = null
+      swerveElevatedPathOnly = false
       return null
     }
     if (yaw >= thr) {
@@ -515,6 +518,7 @@ class TripAnalyzer(
         swerveElevatedPeak = yaw
         swerveElevatedRiseJerk = yawJerkRadps2 ?: 0.0
         swerveElevatedAtSpeed = speed
+        swerveElevatedPathOnly = pathOnlyLateral
       } else {
         if (yaw > swerveElevatedPeak) {
           swerveElevatedPeak = yaw
@@ -526,6 +530,9 @@ class TripAnalyzer(
         if (speed != null) {
           swerveElevatedAtSpeed = swerveElevatedAtSpeed?.let { max(it, speed) } ?: speed
         }
+        if (pathOnlyLateral) {
+          swerveElevatedPathOnly = true
+        }
       }
       return null
     }
@@ -534,11 +541,16 @@ class TripAnalyzer(
     val peak = swerveElevatedPeak
     val riseJerk = swerveElevatedRiseJerk
     val peakSpeed = swerveElevatedAtSpeed
+    val pathOnly = swerveElevatedPathOnly
     swerveElevatedSinceT = null
     swerveElevatedPeak = 0.0
     swerveElevatedRiseJerk = 0.0
     swerveElevatedAtSpeed = null
+    swerveElevatedPathOnly = false
     if (yaw > exitThr) {
+      return null
+    }
+    if (pathOnly) {
       return null
     }
     return if (

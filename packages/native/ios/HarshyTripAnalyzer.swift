@@ -41,6 +41,8 @@ public final class HarshyTripAnalyzer {
   private var swerveElevatedPeak = 0.0
   private var swerveElevatedRiseJerk = 0.0
   private var swerveElevatedAtSpeed: Double?
+  /// True if any elevated sample lacked gyro confirmation.
+  private var swerveElevatedPathOnly = false
   private var maxSpeedMps: Double?
   private var speedSum = 0.0
   private var speedCount = 0
@@ -517,6 +519,7 @@ public final class HarshyTripAnalyzer {
       swerveElevatedPeak = 0
       swerveElevatedRiseJerk = 0
       swerveElevatedAtSpeed = nil
+      swerveElevatedPathOnly = false
       return nil
     }
     if yaw >= thr {
@@ -525,6 +528,7 @@ public final class HarshyTripAnalyzer {
         swerveElevatedPeak = yaw
         swerveElevatedRiseJerk = yawJerkRadps2 ?? 0
         swerveElevatedAtSpeed = speed
+        swerveElevatedPathOnly = pathOnlyLateral
       } else {
         if yaw > swerveElevatedPeak {
           swerveElevatedPeak = yaw
@@ -535,6 +539,9 @@ public final class HarshyTripAnalyzer {
         if let speed {
           swerveElevatedAtSpeed = max(swerveElevatedAtSpeed ?? speed, speed)
         }
+        if pathOnlyLateral {
+          swerveElevatedPathOnly = true
+        }
       }
       return nil
     }
@@ -543,11 +550,16 @@ public final class HarshyTripAnalyzer {
     let peak = swerveElevatedPeak
     let riseJerk = swerveElevatedRiseJerk
     let peakSpeed = swerveElevatedAtSpeed
+    let pathOnly = swerveElevatedPathOnly
     swerveElevatedSinceT = nil
     swerveElevatedPeak = 0
     swerveElevatedRiseJerk = 0
     swerveElevatedAtSpeed = nil
+    swerveElevatedPathOnly = false
     if yaw > exitThr {
+      return nil
+    }
+    if pathOnly {
       return nil
     }
     if harshyIsSwerveMotion(

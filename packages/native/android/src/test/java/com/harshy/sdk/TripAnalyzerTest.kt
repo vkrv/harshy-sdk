@@ -177,7 +177,15 @@ class TripAnalyzerTest {
         at(2000.0, 6.0, 26.0, peak.first, peak.second),
         at(3000.0, 6.0, 26.0, settle.first, settle.second),
       ),
-      imu = emptyList(),
+      imu = listOf(
+        ImuSample(
+          t = 1500.0,
+          accel = gravityUp,
+          linearAccel = Vec3(0.0, 0.0, 0.0),
+          gyro = Vec3(0.0, 0.0, 0.55),
+          gravity = gravityUp,
+        ),
+      ),
       sessionId = "swerve",
       startedAtMs = 0.0,
       endedAtMs = 4000.0,
@@ -186,6 +194,29 @@ class TripAnalyzerTest {
     )
     assertTrue(session.events.any { it.type == EVENT_SWERVE })
     assertFalse(session.events.any { it.type == EVENT_HARSH_CORNER })
+  }
+
+  @Test
+  fun ignoresPathOnlyYawSpike() {
+    val start = 59.46 to 24.82
+    val mid = shift(start.first, start.second, 0.0, 6.0)
+    val peak = shift(mid.first, mid.second, 26.0, 6.0)
+    val settle = shift(peak.first, peak.second, 26.0, 6.0)
+    val session = analyzeTrip(
+      location = listOf(
+        at(0.0, 6.0, 0.0, start.first, start.second),
+        at(1000.0, 6.0, 0.0, mid.first, mid.second),
+        at(2000.0, 6.0, 26.0, peak.first, peak.second),
+        at(3000.0, 6.0, 26.0, settle.first, settle.second),
+      ),
+      imu = emptyList(),
+      sessionId = "path-swerve",
+      startedAtMs = 0.0,
+      endedAtMs = 4000.0,
+      device = DeviceInfo("android", "test"),
+      config = DetectorConfig.DEFAULT,
+    )
+    assertFalse(session.events.any { it.type == EVENT_SWERVE })
   }
 
   @Test

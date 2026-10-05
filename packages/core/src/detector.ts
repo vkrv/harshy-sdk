@@ -162,6 +162,8 @@ type AnalyzerState = {
   swerveElevatedPeak: number;
   swerveElevatedRiseJerk: number;
   swerveElevatedAtSpeed: number | null;
+  /** True if any elevated sample lacked gyro confirmation. */
+  swerveElevatedPathOnly: boolean;
   maxSpeedMps: number | null;
   speedSum: number;
   speedCount: number;
@@ -615,6 +617,7 @@ function resolveSwervePeak(
     state.swerveElevatedPeak = 0;
     state.swerveElevatedRiseJerk = 0;
     state.swerveElevatedAtSpeed = null;
+    state.swerveElevatedPathOnly = false;
     return null;
   }
 
@@ -624,6 +627,7 @@ function resolveSwervePeak(
       state.swerveElevatedPeak = yaw;
       state.swerveElevatedRiseJerk = state.yawJerkRadps2 ?? 0;
       state.swerveElevatedAtSpeed = speed;
+      state.swerveElevatedPathOnly = state.pathOnlyLateral;
     } else {
       if (yaw > state.swerveElevatedPeak) {
         state.swerveElevatedPeak = yaw;
@@ -637,6 +641,9 @@ function resolveSwervePeak(
             ? speed
             : Math.max(state.swerveElevatedAtSpeed, speed);
       }
+      if (state.pathOnlyLateral) {
+        state.swerveElevatedPathOnly = true;
+      }
     }
     return null;
   }
@@ -649,12 +656,18 @@ function resolveSwervePeak(
   const peak = state.swerveElevatedPeak;
   const riseJerk = state.swerveElevatedRiseJerk;
   const peakSpeed = state.swerveElevatedAtSpeed;
+  const pathOnly = state.swerveElevatedPathOnly;
   state.swerveElevatedSinceT = null;
   state.swerveElevatedPeak = 0;
   state.swerveElevatedRiseJerk = 0;
   state.swerveElevatedAtSpeed = null;
+  state.swerveElevatedPathOnly = false;
 
   if (yaw > exitThr) {
+    return null;
+  }
+
+  if (pathOnly) {
     return null;
   }
 
@@ -1328,6 +1341,7 @@ export function createTripAnalyzer(
     swerveElevatedPeak: 0,
     swerveElevatedRiseJerk: 0,
     swerveElevatedAtSpeed: null,
+    swerveElevatedPathOnly: false,
     maxSpeedMps: null,
     speedSum: 0,
     speedCount: 0,

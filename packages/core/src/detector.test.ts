@@ -212,10 +212,29 @@ describe("detector", () => {
     const settle = destination(peak.lat, peak.lon, 26, 6);
     analyzer.pushLocation(placed(0, 6, 0, start.lat, start.lon));
     analyzer.pushLocation(placed(1000, 6, 0, mid.lat, mid.lon));
+    analyzer.pushImu(gyroYaw(1500, 0.55));
     analyzer.pushLocation(placed(2000, 6, 26, peak.lat, peak.lon));
     const flick = analyzer.pushLocation(placed(3000, 6, 26, settle.lat, settle.lon));
     expect(flick.newEvents.some((event) => event.type === "swerve")).toBe(true);
     expect(analyzer.getEvents().some((event) => event.type === "harsh_corner")).toBe(false);
+  });
+
+  it("does not score a path-only yaw spike as a swerve", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "path-swerve",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    const start = { lat: 59.46, lon: 24.82 };
+    const mid = destination(start.lat, start.lon, 0, 6);
+    const peak = destination(mid.lat, mid.lon, 26, 6);
+    const settle = destination(peak.lat, peak.lon, 26, 6);
+    analyzer.pushLocation(placed(0, 6, 0, start.lat, start.lon));
+    analyzer.pushLocation(placed(1000, 6, 0, mid.lat, mid.lon));
+    analyzer.pushLocation(placed(2000, 6, 26, peak.lat, peak.lon));
+    const flick = analyzer.pushLocation(placed(3000, 6, 26, settle.lat, settle.lon));
+    expect(flick.newEvents.some((event) => event.type === "swerve")).toBe(false);
+    expect(analyzer.getEvents().some((event) => event.type === "swerve")).toBe(false);
   });
 
   it("does not score a sustained low-speed turn as a swerve", () => {

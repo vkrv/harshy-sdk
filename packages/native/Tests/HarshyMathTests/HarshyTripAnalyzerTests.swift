@@ -173,7 +173,15 @@ final class HarshyTripAnalyzerTests: XCTestCase {
         at(2000, speedMps: 6, courseDeg: 26, lat: peak.lat, lon: peak.lon),
         at(3000, speedMps: 6, courseDeg: 26, lat: settle.lat, lon: settle.lon),
       ],
-      imu: [],
+      imu: [
+        HarshyImuSample(
+          t: 1500,
+          accel: gravityUp,
+          linearAccel: HarshyVec3(x: 0, y: 0, z: 0),
+          gyro: HarshyVec3(x: 0, y: 0, z: 0.55),
+          gravity: gravityUp
+        ),
+      ],
       sessionId: "swerve",
       startedAtMs: 0,
       endedAtMs: 4000,
@@ -181,6 +189,27 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     )
     XCTAssertTrue(session.events.contains { $0.type == harshyEventSwerve })
     XCTAssertFalse(session.events.contains { $0.type == harshyEventHarshCorner })
+  }
+
+  func testIgnoresPathOnlyYawSpike() {
+    let start = (lat: 59.46, lon: 24.82)
+    let mid = shift(start.lat, start.lon, bearingDeg: 0, distanceM: 6)
+    let peak = shift(mid.lat, mid.lon, bearingDeg: 26, distanceM: 6)
+    let settle = shift(peak.lat, peak.lon, bearingDeg: 26, distanceM: 6)
+    let session = harshyAnalyzeTrip(
+      location: [
+        at(0, speedMps: 6, courseDeg: 0, lat: start.lat, lon: start.lon),
+        at(1000, speedMps: 6, courseDeg: 0, lat: mid.lat, lon: mid.lon),
+        at(2000, speedMps: 6, courseDeg: 26, lat: peak.lat, lon: peak.lon),
+        at(3000, speedMps: 6, courseDeg: 26, lat: settle.lat, lon: settle.lon),
+      ],
+      imu: [],
+      sessionId: "path-swerve",
+      startedAtMs: 0,
+      endedAtMs: 4000,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    XCTAssertFalse(session.events.contains { $0.type == harshyEventSwerve })
   }
 
   func testIgnoresChipBearingOnAStraightRoad() {

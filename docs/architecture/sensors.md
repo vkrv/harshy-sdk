@@ -29,7 +29,7 @@ Automatic trips need a third lifecycle that is **not a trip**: `disarmed` | `arm
 
 | Mode | Armed watch | Trip (`start()` … `stop()`) |
 |------|-------------|------------------------------|
-| APIs | Sparse OS motion / significant-location / activity (iOS: significant-change + ~25 m location with background updates and the location indicator while armed; Android: GPS + fused/network backup + significant-motion, location FGS showing “Waiting for a drive”) | Full GPS + IMU |
+| APIs | Sparse OS motion / significant-location / activity (iOS: significant-change + ~25 m location at 50 m accuracy with background updates and the location indicator while armed; Android: GPS + fused/network backup + significant-motion, location FGS showing “Waiting for a drive”) | Full GPS + IMU |
 | Journal | None | Android `harshy-trip/` while the trip runs |
 | FGS / Live Activity | Android location FGS stays up with “Waiting for a drive”. iOS background location updates, no Live Activity, no trip journal | Start on trip start. Auto `stop({ handoffToWatch: true })` keeps the Android service and swaps the notice back. Manual stop ends it |
 | Sample rate | Duty-cycled OS callbacks | Default 50 Hz IMU, 500 ms GPS |

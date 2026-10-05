@@ -20,11 +20,11 @@ export const locationSampleSchema = z.object({
   t: z.number(),
   lat: z.number(),
   lon: z.number(),
-  altitudeM: z.number().nullable(),
+  altitudeM: z.number().nullable().optional().default(null),
   speedMps: z.number().nullable(),
-  courseDeg: z.number().nullable(),
+  courseDeg: z.number().nullable().optional().default(null),
   accuracyM: z.number().nullable(),
-  altitudeAccuracyM: z.number().nullable(),
+  altitudeAccuracyM: z.number().nullable().optional().default(null),
   roadRmsMps2: z.number().nonnegative().nullable().optional(),
 });
 
@@ -62,7 +62,7 @@ export const drivingEventSchema = z.object({
   id: z.string(),
   type: drivingEventTypeSchema,
   t: z.number(),
-  endT: z.number().nullable(),
+  endT: z.number().nullable().optional().default(null),
   peak: z.number(),
   severity: z.number().min(0).max(1),
   level: harshEventLevelSchema.default("light"),
@@ -89,7 +89,7 @@ export const detectorConfigSchema = z.object({
     .number()
     .positive()
     .default(DEFAULT_DETECTOR_CONFIG.swerveMaxElevatedMs),
-  speedingMps: z.number().positive().nullable(),
+  speedingMps: z.number().positive().nullable().optional().default(null),
   speedingExitX: z.number().positive().max(1).default(DEFAULT_DETECTOR_CONFIG.speedingExitX),
   minSpeedMps: z.number().nonnegative(),
   cooldownMs: z.number().nonnegative(),

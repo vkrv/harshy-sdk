@@ -53,7 +53,8 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     locationManager.activityType = .automotiveNavigation
     locationManager.pausesLocationUpdatesAutomatically = false
     watchManager.delegate = self
-    watchManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    // Match the 50 m start gate. Hundred-meter requests were coarser than that gate, so early fixes never counted.
+    watchManager.desiredAccuracy = harshyWatchStartMaxAccuracyM
     watchManager.distanceFilter = 25
     watchManager.activityType = .automotiveNavigation
     watchManager.pausesLocationUpdatesAutomatically = false

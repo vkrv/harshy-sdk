@@ -1,3 +1,5 @@
+import { stringifySessionExport } from "@harshy/core";
+
 export type JsonFileStore = {
   read: (name: string) => Promise<unknown | null>;
   write: (name: string, value: unknown) => Promise<void>;
@@ -28,14 +30,14 @@ export function createMemoryJsonFileStore(
 ): JsonFileStore {
   const files = new Map<string, string>();
   for (const [name, value] of Object.entries(initial)) {
-    files.set(name, JSON.stringify(value));
+    files.set(name, stringifySessionExport(value));
   }
   return {
     async read(name) {
       return parseJson(files.get(name) ?? null);
     },
     async write(name, value) {
-      files.set(name, JSON.stringify(value));
+      files.set(name, stringifySessionExport(value));
     },
     async remove(name) {
       files.delete(name);
@@ -88,7 +90,7 @@ export function createPrefixedJsonFileStore(
       return parseJson(await kv.getItem(fileKey(name)));
     },
     async write(name, value) {
-      await kv.setItem(fileKey(name), JSON.stringify(value));
+      await kv.setItem(fileKey(name), stringifySessionExport(value));
       const names = await readNames();
       if (!names.includes(name)) {
         await kv.setItem(listKey, JSON.stringify([...names, name]));

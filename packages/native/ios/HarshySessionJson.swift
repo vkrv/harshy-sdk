@@ -37,7 +37,7 @@ public extension HarshySessionExport {
 
 extension HarshyDetectorConfig {
   func toJSONObject() -> [String: Any] {
-    [
+    var json: [String: Any] = [
       "harshAccelMps2": harshAccelMps2,
       "harshBrakeMps2": harshBrakeMps2,
       "harshCornerMps2": harshCornerMps2,
@@ -47,7 +47,6 @@ extension HarshyDetectorConfig {
       "harshSwerveJerkRadps2": harshSwerveJerkRadps2,
       "swerveMinSpeedMps": swerveMinSpeedMps,
       "swerveMaxElevatedMs": swerveMaxElevatedMs,
-      "speedingMps": speedingMps ?? NSNull(),
       "speedingExitX": speedingExitX,
       "minSpeedMps": minSpeedMps,
       "cooldownMs": cooldownMs,
@@ -95,6 +94,10 @@ extension HarshyDetectorConfig {
         "smoothCorner": score.smoothCorner,
       ],
     ]
+    if let speedingMps {
+      json["speedingMps"] = speedingMps
+    }
+    return json
   }
 }
 
@@ -114,17 +117,26 @@ extension HarshyNativeStartOptions {
 
 extension HarshyLocationSample {
   func toJSONObject() -> [String: Any] {
-    [
+    var json: [String: Any] = [
       "t": t,
       "lat": lat,
       "lon": lon,
-      "altitudeM": altitudeM ?? NSNull(),
       "speedMps": speedMps ?? NSNull(),
-      "courseDeg": courseDeg ?? NSNull(),
       "accuracyM": accuracyM ?? NSNull(),
-      "altitudeAccuracyM": altitudeAccuracyM ?? NSNull(),
-      "roadRmsMps2": roadRmsMps2 ?? NSNull(),
     ]
+    if let altitudeM {
+      json["altitudeM"] = altitudeM
+    }
+    if let courseDeg {
+      json["courseDeg"] = courseDeg
+    }
+    if let altitudeAccuracyM {
+      json["altitudeAccuracyM"] = altitudeAccuracyM
+    }
+    if let roadRmsMps2 {
+      json["roadRmsMps2"] = roadRmsMps2
+    }
+    return json
   }
 }
 
@@ -155,7 +167,6 @@ extension HarshyDrivingEvent {
       "id": id,
       "type": type,
       "t": t,
-      "endT": endT ?? NSNull(),
       "peak": peak,
       "severity": severity,
       "level": level,
@@ -164,6 +175,9 @@ extension HarshyDrivingEvent {
       "speedMps": speedMps ?? NSNull(),
       "overlaps": overlaps,
     ]
+    if let endT {
+      json["endT"] = endT
+    }
     if let impactDirection {
       json["impactDirection"] = impactDirection
     }

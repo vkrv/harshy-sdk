@@ -423,7 +423,13 @@ final class HarshyTripAnalyzerTests: XCTestCase {
       device: HarshyDeviceInfo(platform: "ios", model: "test")
     )
     XCTAssertEqual(session.sdkVersion, harshySdkVersion)
-    XCTAssertEqual(session.toJSONObject()["sdkVersion"] as? Int, harshySdkVersion)
+    let json = session.toJSONObject()
+    XCTAssertEqual(json["sdkVersion"] as? Int, harshySdkVersion)
+    let sample = (json["location"] as? [[String: Any]])?.first
+    XCTAssertNil(sample?["altitudeM"])
+    XCTAssertNil(sample?["altitudeAccuracyM"])
+    XCTAssertNil(sample?["roadRmsMps2"])
+    XCTAssertNil((json["config"] as? [String: Any])?["speedingMps"])
   }
 
   func testSessionJsonIncludesTrigger() {

@@ -419,7 +419,13 @@ class TripAnalyzerTest {
       device = DeviceInfo("android", "test"),
     )
     assertEquals(HARSHY_SDK_VERSION, session.sdkVersion)
-    assertEquals(HARSHY_SDK_VERSION, session.toJsonObject().getInt("sdkVersion"))
+    val json = session.toJsonObject()
+    assertEquals(HARSHY_SDK_VERSION, json.getInt("sdkVersion"))
+    val sample = json.getJSONArray("location").getJSONObject(0)
+    assertFalse(sample.has("altitudeM"))
+    assertFalse(sample.has("altitudeAccuracyM"))
+    assertFalse(sample.has("roadRmsMps2"))
+    assertFalse(json.getJSONObject("config").has("speedingMps"))
   }
 
   @Test

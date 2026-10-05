@@ -171,7 +171,7 @@ export {
   type PlaybackHandlers,
   type SimulatedTrip,
 } from "./simulate.js";
-export { compactLocationSample, compactSessionExport } from "./session-compact.js";
+export { compactLocationSample, compactSessionExport, stringifySessionExport } from "./session-compact.js";
 export { uploadSession } from "./upload.js";
 export {
   IDLE_HYSTERESIS_MS,

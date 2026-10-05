@@ -60,7 +60,9 @@ private fun DetectorConfig.toJsonObject(): JSONObject {
   json.put("harshSwerveJerkRadps2", harshSwerveJerkRadps2)
   json.put("swerveMinSpeedMps", swerveMinSpeedMps)
   json.put("swerveMaxElevatedMs", swerveMaxElevatedMs)
-  json.put("speedingMps", speedingMps ?: JSONObject.NULL)
+  if (speedingMps != null) {
+    json.put("speedingMps", speedingMps)
+  }
   json.put("speedingExitX", speedingExitX)
   json.put("minSpeedMps", minSpeedMps)
   json.put("cooldownMs", cooldownMs)
@@ -115,12 +117,20 @@ private fun LocationSample.toJsonObject(): JSONObject {
   json.put("t", t)
   json.put("lat", lat)
   json.put("lon", lon)
-  json.put("altitudeM", altitudeM ?: JSONObject.NULL)
+  if (altitudeM != null) {
+    json.put("altitudeM", altitudeM)
+  }
   json.put("speedMps", speedMps ?: JSONObject.NULL)
-  json.put("courseDeg", courseDeg ?: JSONObject.NULL)
+  if (courseDeg != null) {
+    json.put("courseDeg", courseDeg)
+  }
   json.put("accuracyM", accuracyM ?: JSONObject.NULL)
-  json.put("altitudeAccuracyM", altitudeAccuracyM ?: JSONObject.NULL)
-  json.put("roadRmsMps2", roadRmsMps2 ?: JSONObject.NULL)
+  if (altitudeAccuracyM != null) {
+    json.put("altitudeAccuracyM", altitudeAccuracyM)
+  }
+  if (roadRmsMps2 != null) {
+    json.put("roadRmsMps2", roadRmsMps2)
+  }
   return json
 }
 
@@ -159,7 +169,9 @@ private fun DrivingEvent.toJsonObject(): JSONObject {
   json.put("id", id)
   json.put("type", type)
   json.put("t", t)
-  json.put("endT", endT ?: JSONObject.NULL)
+  if (endT != null) {
+    json.put("endT", endT)
+  }
   json.put("peak", peak)
   json.put("severity", severity)
   json.put("level", level)

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_DETECTOR_CONFIG } from "./config.js";
 import { analyzeTrip } from "./detector.js";
 import { parseSessionExport } from "./schemas.js";
-import { compactLocationSample, compactSessionExport } from "./session-compact.js";
+import { compactLocationSample, compactSessionExport, stringifySessionExport } from "./session-compact.js";
 import { generateSampleTrip } from "./simulate.js";
 import type { SessionExport } from "./types.js";
 
@@ -84,6 +84,17 @@ describe("session compact", () => {
       roadRmsMps2: 1.4,
     });
     expect(parseSessionExport(compact).sessionId).toBe("trip-1");
+    const json = stringifySessionExport(compact);
+    expect(json).not.toContain("altitudeM");
+    expect(json).not.toContain("courseDeg");
+    expect(json).not.toContain("altitudeAccuracyM");
+    expect(json).not.toContain("speedingMps");
+    expect(json).toContain("roadRmsMps2");
+    const reloaded = parseSessionExport(JSON.parse(json));
+    expect(reloaded.location[0]?.altitudeM).toBeNull();
+    expect(reloaded.location[0]?.courseDeg).toBeNull();
+    expect(reloaded.location[0]?.roadRmsMps2).toBe(1.4);
+    expect(reloaded.config.speedingMps).toBeNull();
   });
 
   it("compacts a fully analyzed sample trip without losing GPS points", () => {

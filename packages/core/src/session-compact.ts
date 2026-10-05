@@ -23,3 +23,23 @@ export function compactSessionExport(session: SessionExport): SessionExport {
     imu: [],
   };
 }
+
+/** Keys written only when set. Missing keys parse back as null. */
+const OMIT_WHEN_NULL = new Set([
+  "altitudeM",
+  "altitudeAccuracyM",
+  "courseDeg",
+  "roadRmsMps2",
+  "endT",
+  "speedingMps",
+]);
+
+/** Compact session JSON without null placeholders for fields the archive does not keep. */
+export function stringifySessionExport(value: unknown): string {
+  return JSON.stringify(value, (key, nested) => {
+    if (nested === null && OMIT_WHEN_NULL.has(key)) {
+      return undefined;
+    }
+    return nested;
+  });
+}

@@ -3,11 +3,20 @@ import {
   grantedPermissions,
   parseTripTrigger,
   playSimulatedTrip,
+  LIVE_SIM_VARIANTS,
   type LocationSample,
   type NativeStartOptions,
 } from "@harshy/core";
 
 import type { SensorEngine } from "./types";
+
+let liveSimCursor = Math.floor(Math.random() * LIVE_SIM_VARIANTS.length);
+
+function nextLiveSim(): { variant: (typeof LIVE_SIM_VARIANTS)[number]; headingOffsetDeg: number } {
+  const variant = LIVE_SIM_VARIANTS[liveSimCursor % LIVE_SIM_VARIANTS.length] ?? "loop";
+  liveSimCursor += 1;
+  return { variant, headingOffsetDeg: Math.random() * 360 };
+}
 
 export function createSimulatedEngine(options?: {
   playbackSpeed?: number;
@@ -62,9 +71,12 @@ export function createSimulatedEngine(options?: {
     },
     async start(native: NativeStartOptions) {
       stopPreviewLocked();
+      const plan = nextLiveSim();
       const trip = generateSampleTrip({
         startedAtMs: Date.now(),
         imuHz: native.imuHz,
+        variant: plan.variant,
+        headingOffsetDeg: plan.headingOffsetDeg,
       });
       location = [];
       imu = [];

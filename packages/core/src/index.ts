@@ -168,7 +168,10 @@ export {
 export {
   generateSampleTrip,
   playSimulatedTrip,
+  LIVE_SIM_VARIANTS,
+  SIM_TRIP_VARIANTS,
   type PlaybackHandlers,
+  type SimTripVariant,
   type SimulatedTrip,
 } from "./simulate.js";
 export { compactLocationSample, compactSessionExport, stringifySessionExport } from "./session-compact.js";

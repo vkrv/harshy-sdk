@@ -163,7 +163,7 @@ await harshy.start({
 
 The `source` option:
 - `"native"`: Use device GPS + IMU (requires `@harshy/native`)
-- `"simulated"`: Play a synthetic trip (useful for testing)
+- `"simulated"`: Play a synthetic trip (useful for testing). Each start takes the next track (loop, slalom, or out-and-back) and rotates it, so consecutive trips are not the same ride.
 - `"auto"`: Native on iOS/Android, simulated elsewhere (default)
 
 ### Stopping a Trip

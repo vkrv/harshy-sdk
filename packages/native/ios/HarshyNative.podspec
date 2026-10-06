@@ -11,7 +11,7 @@ Pod::Spec.new do |s|
   }
   s.source         = { git: '' }
   s.static_framework = true
-  s.frameworks = 'CoreLocation', 'CoreMotion'
+  s.frameworks = 'CoreLocation', 'CoreMotion', 'UIKit'
 
   s.dependency 'ExpoModulesCore'
 

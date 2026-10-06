@@ -1,6 +1,7 @@
 import CoreLocation
 import CoreMotion
 import Foundation
+import UIKit
 
 public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
   public protocol Listener: AnyObject {
@@ -43,23 +44,37 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
   private var watchActivityManager: CMMotionActivityManager?
   private var lastWatchActivity = "unknown"
   private var watchStartState = HarshyWatchStartState()
+  private var activeObserver: NSObjectProtocol?
 
   public override init() {
     super.init()
     motionQueue.maxConcurrentOperationCount = 1
     locationManager.delegate = self
-    locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
     locationManager.distanceFilter = kCLDistanceFilterNone
-    locationManager.activityType = .automotiveNavigation
-    locationManager.pausesLocationUpdatesAutomatically = false
+    applyTripLocationProfile(false)
     watchManager.delegate = self
     // Match the 50 m start gate. Hundred-meter requests were coarser than that gate, so early fixes never counted.
     watchManager.desiredAccuracy = harshyWatchStartMaxAccuracyM
     watchManager.distanceFilter = 25
-    watchManager.activityType = .automotiveNavigation
-    watchManager.pausesLocationUpdatesAutomatically = false
+    // Not automotive navigation: that profile keeps the screen awake while fixes are flowing.
+    watchManager.activityType = .other
+    watchManager.pausesLocationUpdatesAutomatically = true
     watchManager.allowsBackgroundLocationUpdates = false
-    watchManager.showsBackgroundLocationIndicator = true
+    watchManager.showsBackgroundLocationIndicator = false
+    applyScreenAwake()
+    activeObserver = NotificationCenter.default.addObserver(
+      forName: UIApplication.didBecomeActiveNotification,
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      self?.applyScreenAwake()
+    }
+  }
+
+  deinit {
+    if let activeObserver {
+      NotificationCenter.default.removeObserver(activeObserver)
+    }
   }
 
   public func capabilities() -> [String: Any] {
@@ -128,6 +143,7 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     disarmWatch()
     if running {
       startForegroundSensors()
+      applyScreenAwake()
       listener?.onState([
         "running": true,
         "sessionId": sessionId,
@@ -168,7 +184,9 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
       locationManager.allowsBackgroundLocationUpdates = true
       locationManager.showsBackgroundLocationIndicator = true
     }
+    applyTripLocationProfile(true)
     startForegroundSensors()
+    applyScreenAwake()
 
     listener?.onState([
       "running": true,
@@ -197,9 +215,11 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     }
 
     previewing = true
+    applyTripLocationProfile(false)
     locationManager.allowsBackgroundLocationUpdates = false
     locationManager.showsBackgroundLocationIndicator = false
     startForegroundSensors()
+    applyScreenAwake()
   }
 
   /// Stop a Sensors-tab readout. No-op during a trip. Leaves an armed watch in place.
@@ -212,6 +232,7 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
       return
     }
     stopForegroundSensors()
+    applyScreenAwake()
   }
 
   public func isRunning() -> Bool {
@@ -220,6 +241,34 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
 
   public func isPreviewing() -> Bool {
     previewing
+  }
+
+  /// Navigation-grade GPS only while a trip is running. Preview and idle use a coarser profile so auto-lock can run.
+  private func applyTripLocationProfile(_ trip: Bool) {
+    if trip {
+      locationManager.desiredAccuracy = kCLLocationAccuracyBestForNavigation
+      locationManager.activityType = .automotiveNavigation
+      locationManager.pausesLocationUpdatesAutomatically = false
+      return
+    }
+    locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+    locationManager.activityType = .other
+    locationManager.pausesLocationUpdatesAutomatically = true
+  }
+
+  /// Screen auto-lock is disabled only during an active trip.
+  /// The delayed clear beats Expo's foreground keep-awake, which otherwise
+  /// turns the idle timer back off after this runs.
+  private func applyScreenAwake() {
+    let awake = running
+    DispatchQueue.main.async {
+      UIApplication.shared.isIdleTimerDisabled = awake
+    }
+    guard !awake else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+      guard let self, !self.running else { return }
+      UIApplication.shared.isIdleTimerDisabled = false
+    }
   }
 
   private func startForegroundSensors() {
@@ -253,6 +302,7 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     locationManager.stopUpdatingLocation()
     locationManager.allowsBackgroundLocationUpdates = false
     locationManager.showsBackgroundLocationIndicator = false
+    applyTripLocationProfile(false)
     motion.stopDeviceMotionUpdates()
     if altimeterActive {
       altimeter.stopRelativeAltitudeUpdates()
@@ -265,6 +315,7 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     running = false
     previewing = false
     stopForegroundSensors()
+    applyScreenAwake()
 
     let endedAtMs = Date().timeIntervalSince1970 * 1000
     let snapshot = snapshot(endedAtMs: endedAtMs, includeImu: includeImu)
@@ -298,10 +349,11 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     lastWatchActivity = "unknown"
     watchStartState = HarshyWatchStartState()
     watchManager.allowsBackgroundLocationUpdates = true
-    watchManager.showsBackgroundLocationIndicator = true
+    watchManager.showsBackgroundLocationIndicator = false
     watchManager.startMonitoringSignificantLocationChanges()
     watchManager.startUpdatingLocation()
     startWatchActivity()
+    applyScreenAwake()
   }
 
   public func disarmWatch() {
@@ -315,6 +367,7 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     watchManager.stopUpdatingLocation()
     watchManager.stopMonitoringSignificantLocationChanges()
     stopWatchActivity()
+    applyScreenAwake()
   }
 
   public func isWatching() -> Bool {

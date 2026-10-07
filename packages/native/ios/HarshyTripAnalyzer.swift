@@ -43,6 +43,13 @@ public final class HarshyTripAnalyzer {
   private var swerveElevatedAtSpeed: Double?
   /// True if any elevated sample lacked gyro confirmation.
   private var swerveElevatedPathOnly = false
+  private var gpsBrake = HarshyGpsBrakeSample()
+  private var lastMovingAtMs: Double?
+  private var brakeForward: HarshyVec3?
+  private var brakeForwardGravity: HarshyVec3?
+  private var imuBrakeSinceT: Double?
+  private var imuBrakeLastT: Double?
+  private var imuBrakePeak = 0.0
   private var maxSpeedMps: Double?
   private var speedSum = 0.0
   private var speedCount = 0
@@ -139,6 +146,16 @@ public final class HarshyTripAnalyzer {
     lateralAccelMps2 = accel.lateral
     pathOnlyLateral = accel.pathOnlyLateral
     yawRateRadps = accel.yawRateRadps
+    gpsBrake = HarshyGpsBrakeSample(
+      longitudinal: accel.longitudinal,
+      entrySpeedMps: accel.entrySpeedMps,
+      exitSpeedMps: accel.exitSpeedMps,
+      dtSec: accel.dtSec,
+      stepM: accel.stepM
+    )
+    if let movingSpeed = stored.speedMps, movingSpeed >= config.minSpeedMps {
+      lastMovingAtMs = stored.t
+    }
     let yaw = accel.yawRateRadps
     yawJerkRadps2 = yaw.flatMap {
       harshyYawRateJerkRadps2(
@@ -265,10 +282,14 @@ public final class HarshyTripAnalyzer {
     longitudinal: Double?,
     lateral: Double?,
     yawRateRadps: Double?,
-    pathOnlyLateral: Bool
+    pathOnlyLateral: Bool,
+    entrySpeedMps: Double?,
+    exitSpeedMps: Double?,
+    dtSec: Double?,
+    stepM: Double?
   ) {
     guard let current = lastGoodLocation, current.speedMps != nil else {
-      return (nil, nil, nil, false)
+      return (nil, nil, nil, false, nil, nil, nil, nil)
     }
     var previous: HarshyLocationSample?
     var previousIndex = -1
@@ -285,11 +306,11 @@ public final class HarshyTripAnalyzer {
       }
     }
     guard let previous, let prevSpeed = previous.speedMps, let currentSpeed = current.speedMps else {
-      return (nil, nil, nil, false)
+      return (nil, nil, nil, false, nil, nil, nil, nil)
     }
     let dtSec = (current.t - previous.t) / 1000
     if dtSec < harshyGpsAccelMinDtSec || dtSec > harshyGpsAccelMaxDtSec {
-      return (nil, nil, nil, false)
+      return (nil, nil, nil, false, nil, nil, nil, nil)
     }
     let longitudinal = (currentSpeed - prevSpeed) / dtSec
     let pathMinM = harshyPathBearingMinM(prevAccuracyM: previous.accuracyM, currAccuracyM: current.accuracyM)
@@ -332,7 +353,16 @@ public final class HarshyTripAnalyzer {
     } else if speedsOk {
       yawRate = 0
     }
-    return (longitudinal, lateral, yawRate, pathOnlyLateral)
+    return (
+      longitudinal,
+      lateral,
+      yawRate,
+      pathOnlyLateral,
+      prevSpeed,
+      currentSpeed,
+      dtSec,
+      harshyHaversineM(previous, current)
+    )
   }
 
   private func meanVerticalGyro(fromT: Double, toT: Double) -> Double? {
@@ -407,6 +437,69 @@ public final class HarshyTripAnalyzer {
     return nil
   }
 
+  private func clearBrakeAxis() {
+    brakeForward = nil
+    brakeForwardGravity = nil
+    imuBrakeSinceT = nil
+    imuBrakeLastT = nil
+    imuBrakePeak = 0
+  }
+
+  private func resolveImuBrake(t: Double) -> Double? {
+    guard let sample = lastImu else { return nil }
+    if openHandheld != nil {
+      clearBrakeAxis()
+      return nil
+    }
+    let gravity = sample.gravity
+    if brakeForward != nil && harshyGravityTiltDeg(from: brakeForwardGravity, to: gravity) > harshyImuBrakeAxisTiltDeg {
+      clearBrakeAxis()
+      return nil
+    }
+
+    let speedNow = currentSpeed()
+    let gpsLong = longitudinalAccelMps2
+    let linear = harshySampleLinearAccel(sample)
+    let share = harshyVerticalShare(linear: linear, gravity: gravity)
+    if let speedNow, let gpsLong, speedNow >= harshyImuBrakeLearnMinMps, share <= config.impactVerticalMax {
+      if let pointed = harshyForwardSampleFromGps(
+        harshyHorizontalLinear(linear, gravity: gravity),
+        gpsLongitudinal: gpsLong
+      ) {
+        brakeForward = harshyBlendForwardAxis(brakeForward, sample: pointed)
+        brakeForwardGravity = gravity.map { harshyCopyVec($0) }
+      }
+    }
+
+    let forward = brakeForward
+    let lastMoving = lastMovingAtMs
+    let settled = t - startedAtMs >= config.jerkSettleMs
+    let recent = lastMoving != nil && t - lastMoving! <= harshyImuBrakeRecentMs
+    let braking = forward == nil
+      ? 0.0
+      : harshyBrakeAlongForward(harshyHorizontalLinear(linear, gravity: gravity), forward: forward!)
+    let holding =
+      forward != nil &&
+      settled &&
+      recent &&
+      share <= config.impactVerticalMax &&
+      braking >= config.harshBrakeMps2
+    if !holding {
+      imuBrakeSinceT = nil
+      imuBrakeLastT = nil
+      imuBrakePeak = 0
+      return nil
+    }
+    if imuBrakeSinceT == nil || imuBrakeLastT == nil || t - imuBrakeLastT! > harshyImuBrakeGapMs {
+      imuBrakeSinceT = t
+      imuBrakePeak = braking
+    }
+    imuBrakeLastT = t
+    imuBrakePeak = max(imuBrakePeak, braking)
+    guard let opened = imuBrakeSinceT, t - opened >= harshyImuBrakeHoldMs else { return nil }
+    return imuBrakePeak
+  }
+
   private func detectFromMotion(_ t: Double, includeSmooth: Bool = false) -> [HarshyDrivingEvent] {
     var emitted: [HarshyDrivingEvent] = []
     let speed = currentSpeed()
@@ -415,29 +508,43 @@ public final class HarshyTripAnalyzer {
     if let speeding = updateSpeedingSpan(t: t, speed: speed, loc: loc, moving: moving) {
       emitted.append(speeding)
     }
-    if moving, let longAccel = longitudinalAccelMps2 {
-      if longAccel >= config.harshAccelMps2 {
-        if let event = maybeEmit(
-          type: harshyEventHarshAccel,
-          t: t,
-          peak: longAccel,
-          threshold: config.harshAccelMps2,
-          location: loc,
-          speedMps: speed
-        ) {
-          emitted.append(event)
-        }
-      } else if longAccel <= -config.harshBrakeMps2 {
-        if let event = maybeEmit(
-          type: harshyEventHarshBrake,
-          t: t,
-          peak: abs(longAccel),
-          threshold: config.harshBrakeMps2,
-          location: loc,
-          speedMps: speed
-        ) {
-          emitted.append(event)
-        }
+    if moving, let longAccel = longitudinalAccelMps2, longAccel >= config.harshAccelMps2 {
+      if let event = maybeEmit(
+        type: harshyEventHarshAccel,
+        t: t,
+        peak: longAccel,
+        threshold: config.harshAccelMps2,
+        location: loc,
+        speedMps: speed
+      ) {
+        emitted.append(event)
+      }
+    } else if harshyGpsHarshBrakeQualifies(
+      gpsBrake,
+      minSpeedMps: config.minSpeedMps,
+      harshBrakeMps2: config.harshBrakeMps2
+    ) {
+      if let event = maybeEmit(
+        type: harshyEventHarshBrake,
+        t: t,
+        peak: abs(longitudinalAccelMps2 ?? 0),
+        threshold: config.harshBrakeMps2,
+        location: loc,
+        speedMps: speed
+      ) {
+        emitted.append(event)
+      }
+    }
+    if !includeSmooth, let peak = resolveImuBrake(t: t) {
+      if let event = maybeEmit(
+        type: harshyEventHarshBrake,
+        t: t,
+        peak: peak,
+        threshold: config.harshBrakeMps2,
+        location: loc,
+        speedMps: speed
+      ) {
+        emitted.append(event)
       }
     }
     let latAccel = lateralAccelMps2

@@ -640,4 +640,158 @@ class TripAnalyzerTest {
     }
     assertTrue(analyzer.getEvents().any { it.type == EVENT_HARSH_CORNER })
   }
+
+  private fun mounted(
+    t: Double,
+    x: Double,
+    y: Double = 0.0,
+    z: Double = 0.0,
+    gravity: Vec3 = Vec3(0.0, 0.0, 9.8),
+    gyro: Vec3 = Vec3(0.0, 0.0, 0.0),
+  ): ImuSample {
+    return ImuSample(
+      t = t,
+      accel = Vec3(x + gravity.x, y + gravity.y, z + gravity.z),
+      linearAccel = Vec3(x, y, z),
+      gyro = gyro,
+      gravity = gravity,
+    )
+  }
+
+  @Test
+  fun countsAHarshBrakeThatArrivesAlreadyStopped() {
+    val analyzer = TripAnalyzer(DetectorConfig.DEFAULT, "stop-brake", 0.0, DeviceInfo("android", "test"))
+    val entry = 15.0 / 3.6
+    val lat = 59.4
+    val lon = 24.8
+    analyzer.pushLocation(at(0.0, entry, 0.0, lat, lon))
+    val next = shift(lat, lon, 0.0, entry / 2.0)
+    analyzer.pushLocation(at(1000.0, 0.0, 0.0, next.first, next.second))
+    val brakes = analyzer.getEvents().filter { it.type == EVENT_HARSH_BRAKE }
+    assertEquals(1, brakes.size)
+    assertEquals(entry, brakes[0].peak, 1e-5)
+  }
+
+  @Test
+  fun ignoresAReportedStopWhileThePathIsStillRolling() {
+    val analyzer = TripAnalyzer(DetectorConfig.DEFAULT, "false-stop", 0.0, DeviceInfo("android", "test"))
+    val lat = 59.4
+    val lon = 24.8
+    analyzer.pushLocation(at(0.0, 10.0, 0.0, lat, lon))
+    val next = shift(lat, lon, 0.0, 10.0)
+    analyzer.pushLocation(at(1000.0, 0.0, 0.0, next.first, next.second))
+    assertFalse(analyzer.getEvents().any { it.type == EVENT_HARSH_BRAKE })
+  }
+
+  @Test
+  fun stillCountsAHarshBrakeWhileTheCarIsMoving() {
+    val analyzer = TripAnalyzer(DetectorConfig.DEFAULT, "moving-brake", 0.0, DeviceInfo("android", "test"))
+    val lat = 59.4
+    val lon = 24.8
+    analyzer.pushLocation(at(0.0, 20.0, 0.0, lat, lon))
+    val next = shift(lat, lon, 0.0, 17.0)
+    analyzer.pushLocation(at(1000.0, 14.0, 0.0, next.first, next.second))
+    val brakes = analyzer.getEvents().filter { it.type == EVENT_HARSH_BRAKE }
+    assertEquals(1, brakes.size)
+    assertEquals(6.0, brakes[0].peak, 1e-5)
+  }
+
+  @Test
+  fun ignoresACrawlWobbleThatDoesNotDropTwoMps() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig.DEFAULT.copy(harshBrakeMps2 = 1.0, minSpeedMps = 2.0),
+      "crawl",
+      0.0,
+      DeviceInfo("android", "test"),
+    )
+    val lat = 59.4
+    val lon = 24.8
+    analyzer.pushLocation(at(0.0, 3.0, 0.0, lat, lon))
+    val next = shift(lat, lon, 0.0, 2.25)
+    analyzer.pushLocation(at(1000.0, 1.5, 0.0, next.first, next.second))
+    assertFalse(analyzer.getEvents().any { it.type == EVENT_HARSH_BRAKE })
+  }
+
+  @Test
+  fun recordsAMountedImuBrakeWhenTheGpsStepStaysUnderTheBar() {
+    val analyzer = TripAnalyzer(DetectorConfig.DEFAULT, "imu-brake", 0.0, DeviceInfo("android", "test"))
+    var lat = 59.4
+    var lon = 24.8
+    analyzer.pushLocation(at(0.0, 10.0, 0.0, lat, lon))
+    var next = shift(lat, lon, 0.0, 9.0)
+    analyzer.pushLocation(at(1000.0, 8.0, 0.0, next.first, next.second))
+    analyzer.pushImu(mounted(1000.0, -3.0))
+    lat = next.first
+    lon = next.second
+    next = shift(lat, lon, 0.0, 7.8)
+    analyzer.pushLocation(at(2000.0, 7.6, 0.0, next.first, next.second))
+    for (t in listOf(2000.0, 2100.0, 2200.0, 2300.0)) {
+      analyzer.pushImu(mounted(t, -4.0))
+    }
+    val brakes = analyzer.getEvents().filter { it.type == EVENT_HARSH_BRAKE }
+    assertEquals(1, brakes.size)
+    assertTrue(brakes[0].peak >= 3.0)
+  }
+
+  @Test
+  fun doesNotScoreAnImuBrakeThatIsVerticalTooShortOrAfterThePhoneTilts() {
+    val analyzer = TripAnalyzer(DetectorConfig.DEFAULT, "imu-brake-quiet", 0.0, DeviceInfo("android", "test"))
+    var lat = 59.4
+    var lon = 24.8
+    analyzer.pushLocation(at(0.0, 10.0, 0.0, lat, lon))
+    var next = shift(lat, lon, 0.0, 9.0)
+    analyzer.pushLocation(at(1000.0, 8.0, 0.0, next.first, next.second))
+    analyzer.pushImu(mounted(1000.0, -3.0))
+    lat = next.first
+    lon = next.second
+    next = shift(lat, lon, 0.0, 7.8)
+    analyzer.pushLocation(at(2000.0, 7.6, 0.0, next.first, next.second))
+    for (t in listOf(2000.0, 2100.0)) {
+      analyzer.pushImu(mounted(t, -4.0))
+    }
+    assertFalse(analyzer.getEvents().any { it.type == EVENT_HARSH_BRAKE })
+    for (t in listOf(3000.0, 3100.0, 3200.0, 3300.0)) {
+      analyzer.pushImu(mounted(t, 0.0, z = 6.0))
+    }
+    assertFalse(analyzer.getEvents().any { it.type == EVENT_HARSH_BRAKE })
+    val tilted = Vec3(9.8, 0.0, 0.0)
+    for (t in listOf(4000.0, 4100.0, 4200.0, 4300.0)) {
+      analyzer.pushImu(mounted(t, 0.0, y = -4.0, gravity = tilted))
+    }
+    assertFalse(analyzer.getEvents().any { it.type == EVENT_HARSH_BRAKE })
+  }
+
+  @Test
+  fun doesNotScoreAnImuBrakeWhileThePhoneIsInHand() {
+    val analyzer = TripAnalyzer(DetectorConfig.DEFAULT, "imu-brake-hand", 0.0, DeviceInfo("android", "test"))
+    var lat = 59.4
+    var lon = 24.8
+    analyzer.pushLocation(at(0.0, 10.0, 0.0, lat, lon))
+    var next = shift(lat, lon, 0.0, 9.0)
+    analyzer.pushLocation(at(1000.0, 8.0, 0.0, next.first, next.second))
+    analyzer.pushImu(mounted(1000.0, -3.0))
+    lat = next.first
+    lon = next.second
+    next = shift(lat, lon, 0.0, 8.0)
+    analyzer.pushLocation(at(2000.0, 8.0, 0.0, next.first, next.second))
+    var t = 2200.0
+    while (t <= 3100.0) {
+      analyzer.pushImu(mounted(t, 0.0))
+      t += 100.0
+    }
+    val tilted = Vec3(9.8, 0.0, 0.0)
+    val gyro = Vec3(2.0, 0.0, 0.0)
+    t = 3200.0
+    while (t <= 3700.0) {
+      analyzer.pushImu(mounted(t, 0.0, gravity = tilted, gyro = gyro))
+      t += 100.0
+    }
+    t = 3800.0
+    while (t <= 4200.0) {
+      analyzer.pushImu(mounted(t, 0.0, y = -4.0, gravity = tilted, gyro = gyro))
+      t += 100.0
+    }
+    assertTrue(analyzer.getEvents().any { it.type == PHONE_HANDHELD_TYPE })
+    assertFalse(analyzer.getEvents().any { it.type == EVENT_HARSH_BRAKE })
+  }
 }

@@ -87,6 +87,28 @@ function gyroYaw(t: number, z = 2): ImuSample {
   };
 }
 
+function mountedImu(
+  t: number,
+  linear: { x: number; y: number; z: number },
+  gravity: { x: number; y: number; z: number } = { x: 0, y: 0, z: 9.8 },
+  gyro: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 },
+): ImuSample {
+  return {
+    t,
+    accel: {
+      x: linear.x + gravity.x,
+      y: linear.y + gravity.y,
+      z: linear.z + gravity.z,
+    },
+    linearAccel: linear,
+    gyro,
+    magnetometer: null,
+    attitude: null,
+    gravity,
+    barometerHpa: null,
+  };
+}
+
 function imuSpike(t: number, mag = 8): ImuSample {
   return {
     t,
@@ -691,6 +713,166 @@ describe("detector", () => {
     expect(analyzer.getMetrics().points).toBe(21);
     expect(analyzer.getMetrics().score).toBe(100);
     expect(analyzer.getEvents().some((event) => event.type.startsWith("harsh_"))).toBe(false);
+  });
+
+  it("counts a harsh brake that arrives already stopped", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "stop-brake",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    const entry = 15 / 3.6;
+    const lat = 59.4;
+    const lon = 24.8;
+    analyzer.pushLocation(placed(0, entry, 0, lat, lon));
+    const next = destination(lat, lon, 0, entry / 2);
+    analyzer.pushLocation(placed(1000, 0, 0, next.lat, next.lon));
+    const brakes = analyzer.getEvents().filter((event) => event.type === "harsh_brake");
+    expect(brakes).toHaveLength(1);
+    expect(brakes[0]?.peak).toBeCloseTo(entry, 5);
+  });
+
+  it("ignores a reported stop while the path is still rolling", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "false-stop",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    const lat = 59.4;
+    const lon = 24.8;
+    analyzer.pushLocation(placed(0, 10, 0, lat, lon));
+    const next = destination(lat, lon, 0, 10);
+    analyzer.pushLocation(placed(1000, 0, 0, next.lat, next.lon));
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_brake")).toBe(false);
+  });
+
+  it("still counts a harsh brake while the car is moving", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "moving-brake",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    const lat = 59.4;
+    const lon = 24.8;
+    analyzer.pushLocation(placed(0, 20, 0, lat, lon));
+    const next = destination(lat, lon, 0, 17);
+    analyzer.pushLocation(placed(1000, 14, 0, next.lat, next.lon));
+    const brakes = analyzer.getEvents().filter((event) => event.type === "harsh_brake");
+    expect(brakes).toHaveLength(1);
+    expect(brakes[0]?.peak).toBeCloseTo(6, 5);
+  });
+
+  it("ignores a crawl wobble that does not drop 2 m/s", () => {
+    const analyzer = createTripAnalyzer(
+      { harshBrakeMps2: 1, minSpeedMps: 2 },
+      {
+        sessionId: "crawl",
+        startedAtMs: 0,
+        device: { platform: "web", model: "test" },
+      },
+    );
+    const lat = 59.4;
+    const lon = 24.8;
+    analyzer.pushLocation(placed(0, 3, 0, lat, lon));
+    const next = destination(lat, lon, 0, 2.25);
+    analyzer.pushLocation(placed(1000, 1.5, 0, next.lat, next.lon));
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_brake")).toBe(false);
+  });
+
+  it("records a mounted IMU brake when the GPS step stays under the bar", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "imu-brake",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    let lat = 59.4;
+    let lon = 24.8;
+    analyzer.pushLocation(placed(0, 10, 0, lat, lon));
+    let next = destination(lat, lon, 0, 9);
+    analyzer.pushLocation(placed(1000, 8, 0, next.lat, next.lon));
+    analyzer.pushImu(mountedImu(1000, { x: -3, y: 0, z: 0 }));
+    lat = next.lat;
+    lon = next.lon;
+    next = destination(lat, lon, 0, 7.8);
+    analyzer.pushLocation(placed(2000, 7.6, 0, next.lat, next.lon));
+    for (const t of [2000, 2100, 2200, 2300]) {
+      analyzer.pushImu(mountedImu(t, { x: -4, y: 0, z: 0 }));
+    }
+    const brakes = analyzer.getEvents().filter((event) => event.type === "harsh_brake");
+    expect(brakes).toHaveLength(1);
+    expect(brakes[0]?.peak).toBeGreaterThanOrEqual(3);
+  });
+
+  it("does not score an IMU brake that is vertical, too short, or after the phone tilts", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "imu-brake-quiet",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    let lat = 59.4;
+    let lon = 24.8;
+    analyzer.pushLocation(placed(0, 10, 0, lat, lon));
+    let next = destination(lat, lon, 0, 9);
+    analyzer.pushLocation(placed(1000, 8, 0, next.lat, next.lon));
+    analyzer.pushImu(mountedImu(1000, { x: -3, y: 0, z: 0 }));
+    lat = next.lat;
+    lon = next.lon;
+    next = destination(lat, lon, 0, 7.8);
+    analyzer.pushLocation(placed(2000, 7.6, 0, next.lat, next.lon));
+
+    for (const t of [2000, 2100]) {
+      analyzer.pushImu(mountedImu(t, { x: -4, y: 0, z: 0 }));
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_brake")).toBe(false);
+
+    for (const t of [3000, 3100, 3200, 3300]) {
+      analyzer.pushImu(mountedImu(t, { x: 0, y: 0, z: 6 }));
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_brake")).toBe(false);
+
+    for (const t of [4000, 4100, 4200, 4300]) {
+      analyzer.pushImu(
+        mountedImu(
+          t,
+          { x: 0, y: -4, z: 0 },
+          { x: 9.8, y: 0, z: 0 },
+        ),
+      );
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_brake")).toBe(false);
+  });
+
+  it("does not score an IMU brake while the phone is in hand", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "imu-brake-hand",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    let lat = 59.4;
+    let lon = 24.8;
+    analyzer.pushLocation(placed(0, 10, 0, lat, lon));
+    let next = destination(lat, lon, 0, 9);
+    analyzer.pushLocation(placed(1000, 8, 0, next.lat, next.lon));
+    analyzer.pushImu(mountedImu(1000, { x: -3, y: 0, z: 0 }));
+    lat = next.lat;
+    lon = next.lon;
+    next = destination(lat, lon, 0, 8);
+    analyzer.pushLocation(placed(2000, 8, 0, next.lat, next.lon));
+    for (let t = 2200; t <= 3100; t += 100) {
+      analyzer.pushImu(mountedImu(t, { x: 0, y: 0, z: 0 }));
+    }
+    for (let t = 3200; t <= 3700; t += 100) {
+      analyzer.pushImu(
+        mountedImu(t, { x: 0, y: 0, z: 0 }, { x: 9.8, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }),
+      );
+    }
+    for (let t = 3800; t <= 4200; t += 100) {
+      analyzer.pushImu(
+        mountedImu(t, { x: 0, y: -4, z: 0 }, { x: 9.8, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }),
+      );
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "phone_handheld")).toBe(true);
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_brake")).toBe(false);
   });
 
   it("drops a gentle-accel hold when the pull gets harsh", () => {

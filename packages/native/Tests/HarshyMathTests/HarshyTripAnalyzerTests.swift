@@ -636,4 +636,184 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     }
     XCTAssertTrue(analyzer.getEvents().contains { $0.type == harshyEventHarshCorner })
   }
+
+  private func mounted(
+    _ t: Double,
+    x: Double,
+    y: Double = 0,
+    z: Double = 0,
+    gravity: HarshyVec3 = HarshyVec3(x: 0, y: 0, z: 9.8),
+    gyro: HarshyVec3 = HarshyVec3(x: 0, y: 0, z: 0)
+  ) -> HarshyImuSample {
+    HarshyImuSample(
+      t: t,
+      accel: HarshyVec3(x: x + gravity.x, y: y + gravity.y, z: z + gravity.z),
+      linearAccel: HarshyVec3(x: x, y: y, z: z),
+      gyro: gyro,
+      gravity: gravity
+    )
+  }
+
+  func testCountsAHarshBrakeThatArrivesAlreadyStopped() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "stop-brake",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let entry = 15.0 / 3.6
+    let lat = 59.4
+    let lon = 24.8
+    _ = analyzer.pushLocation(at(0, speedMps: entry, courseDeg: 0, lat: lat, lon: lon))
+    let next = shift(lat, lon, bearingDeg: 0, distanceM: entry / 2)
+    _ = analyzer.pushLocation(at(1000, speedMps: 0, courseDeg: 0, lat: next.lat, lon: next.lon))
+    let brakes = analyzer.getEvents().filter { $0.type == harshyEventHarshBrake }
+    XCTAssertEqual(brakes.count, 1)
+    XCTAssertEqual(brakes[0].peak, entry, accuracy: 1e-5)
+  }
+
+  func testIgnoresAReportedStopWhileThePathIsStillRolling() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "false-stop",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let lat = 59.4
+    let lon = 24.8
+    _ = analyzer.pushLocation(at(0, speedMps: 10, courseDeg: 0, lat: lat, lon: lon))
+    let next = shift(lat, lon, bearingDeg: 0, distanceM: 10)
+    _ = analyzer.pushLocation(at(1000, speedMps: 0, courseDeg: 0, lat: next.lat, lon: next.lon))
+    XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshBrake })
+  }
+
+  func testStillCountsAHarshBrakeWhileTheCarIsMoving() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "moving-brake",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let lat = 59.4
+    let lon = 24.8
+    _ = analyzer.pushLocation(at(0, speedMps: 20, courseDeg: 0, lat: lat, lon: lon))
+    let next = shift(lat, lon, bearingDeg: 0, distanceM: 17)
+    _ = analyzer.pushLocation(at(1000, speedMps: 14, courseDeg: 0, lat: next.lat, lon: next.lon))
+    let brakes = analyzer.getEvents().filter { $0.type == harshyEventHarshBrake }
+    XCTAssertEqual(brakes.count, 1)
+    XCTAssertEqual(brakes[0].peak, 6, accuracy: 1e-5)
+  }
+
+  func testIgnoresACrawlWobbleThatDoesNotDropTwoMps() {
+    var config = HarshyDetectorConfig.default
+    config.harshBrakeMps2 = 1
+    config.minSpeedMps = 2
+    let analyzer = harshyCreateTripAnalyzer(
+      config: config,
+      sessionId: "crawl",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let lat = 59.4
+    let lon = 24.8
+    _ = analyzer.pushLocation(at(0, speedMps: 3, courseDeg: 0, lat: lat, lon: lon))
+    let next = shift(lat, lon, bearingDeg: 0, distanceM: 2.25)
+    _ = analyzer.pushLocation(at(1000, speedMps: 1.5, courseDeg: 0, lat: next.lat, lon: next.lon))
+    XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshBrake })
+  }
+
+  func testRecordsAMountedImuBrakeWhenTheGpsStepStaysUnderTheBar() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "imu-brake",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    var lat = 59.4
+    var lon = 24.8
+    _ = analyzer.pushLocation(at(0, speedMps: 10, courseDeg: 0, lat: lat, lon: lon))
+    var next = shift(lat, lon, bearingDeg: 0, distanceM: 9)
+    _ = analyzer.pushLocation(at(1000, speedMps: 8, courseDeg: 0, lat: next.lat, lon: next.lon))
+    _ = analyzer.pushImu(mounted(1000, x: -3))
+    lat = next.lat
+    lon = next.lon
+    next = shift(lat, lon, bearingDeg: 0, distanceM: 7.8)
+    _ = analyzer.pushLocation(at(2000, speedMps: 7.6, courseDeg: 0, lat: next.lat, lon: next.lon))
+    for t in stride(from: 2000.0, through: 2300.0, by: 100.0) {
+      _ = analyzer.pushImu(mounted(t, x: -4))
+    }
+    let brakes = analyzer.getEvents().filter { $0.type == harshyEventHarshBrake }
+    XCTAssertEqual(brakes.count, 1)
+    XCTAssertGreaterThanOrEqual(brakes[0].peak, 3)
+  }
+
+  func testDoesNotScoreAnImuBrakeThatIsVerticalTooShortOrAfterThePhoneTilts() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "imu-brake-quiet",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    var lat = 59.4
+    var lon = 24.8
+    _ = analyzer.pushLocation(at(0, speedMps: 10, courseDeg: 0, lat: lat, lon: lon))
+    var next = shift(lat, lon, bearingDeg: 0, distanceM: 9)
+    _ = analyzer.pushLocation(at(1000, speedMps: 8, courseDeg: 0, lat: next.lat, lon: next.lon))
+    _ = analyzer.pushImu(mounted(1000, x: -3))
+    lat = next.lat
+    lon = next.lon
+    next = shift(lat, lon, bearingDeg: 0, distanceM: 7.8)
+    _ = analyzer.pushLocation(at(2000, speedMps: 7.6, courseDeg: 0, lat: next.lat, lon: next.lon))
+    for t in [2000.0, 2100.0] {
+      _ = analyzer.pushImu(mounted(t, x: -4))
+    }
+    XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshBrake })
+    for t in [3000.0, 3100.0, 3200.0, 3300.0] {
+      _ = analyzer.pushImu(mounted(t, x: 0, z: 6))
+    }
+    XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshBrake })
+    let tilted = HarshyVec3(x: 9.8, y: 0, z: 0)
+    for t in [4000.0, 4100.0, 4200.0, 4300.0] {
+      _ = analyzer.pushImu(mounted(t, x: 0, y: -4, gravity: tilted))
+    }
+    XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshBrake })
+  }
+
+  func testDoesNotScoreAnImuBrakeWhileThePhoneIsInHand() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "imu-brake-hand",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    var lat = 59.4
+    var lon = 24.8
+    _ = analyzer.pushLocation(at(0, speedMps: 10, courseDeg: 0, lat: lat, lon: lon))
+    var next = shift(lat, lon, bearingDeg: 0, distanceM: 9)
+    _ = analyzer.pushLocation(at(1000, speedMps: 8, courseDeg: 0, lat: next.lat, lon: next.lon))
+    _ = analyzer.pushImu(mounted(1000, x: -3))
+    lat = next.lat
+    lon = next.lon
+    next = shift(lat, lon, bearingDeg: 0, distanceM: 8)
+    _ = analyzer.pushLocation(at(2000, speedMps: 8, courseDeg: 0, lat: next.lat, lon: next.lon))
+    var t = 2200.0
+    while t <= 3100 {
+      _ = analyzer.pushImu(mounted(t, x: 0))
+      t += 100
+    }
+    let tilted = HarshyVec3(x: 9.8, y: 0, z: 0)
+    let gyro = HarshyVec3(x: 2, y: 0, z: 0)
+    t = 3200
+    while t <= 3700 {
+      _ = analyzer.pushImu(mounted(t, x: 0, gravity: tilted, gyro: gyro))
+      t += 100
+    }
+    t = 3800
+    while t <= 4200 {
+      _ = analyzer.pushImu(mounted(t, x: 0, y: -4, gravity: tilted, gyro: gyro))
+      t += 100
+    }
+    XCTAssertTrue(analyzer.getEvents().contains { $0.type == harshyPhoneHandheldType })
+    XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshBrake })
+  }
 }

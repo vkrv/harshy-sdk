@@ -48,6 +48,13 @@ class TripAnalyzer(
   private var swerveElevatedAtSpeed: Double? = null
   /** True if any elevated sample lacked gyro confirmation. */
   private var swerveElevatedPathOnly = false
+  private var gpsBrake = GpsBrakeSample(null, null, null, null, null)
+  private var lastMovingAtMs: Double? = null
+  private var brakeForward: Vec3? = null
+  private var brakeForwardGravity: Vec3? = null
+  private var imuBrakeSinceT: Double? = null
+  private var imuBrakeLastT: Double? = null
+  private var imuBrakePeak = 0.0
   private var maxSpeedMps: Double? = null
   private var speedSum = 0.0
   private var speedCount = 0
@@ -132,6 +139,17 @@ class TripAnalyzer(
     lateralAccelMps2 = accel.lateral
     pathOnlyLateral = accel.pathOnlyLateral
     yawRateRadps = accel.yawRateRadps
+    gpsBrake = GpsBrakeSample(
+      accel.longitudinal,
+      accel.entrySpeedMps,
+      accel.exitSpeedMps,
+      accel.dtSec,
+      accel.stepM,
+    )
+    val movingSpeed = stored.speedMps
+    if (movingSpeed != null && movingSpeed >= config.minSpeedMps) {
+      lastMovingAtMs = stored.t
+    }
     val yaw = accel.yawRateRadps
     yawJerkRadps2 =
       if (yaw == null) null else yawRateJerkRadps2(yaw, stored.t, prevYawRateRadps, prevYawAtT)
@@ -269,6 +287,10 @@ class TripAnalyzer(
     val lateral: Double?,
     val yawRateRadps: Double?,
     val pathOnlyLateral: Boolean,
+    val entrySpeedMps: Double? = null,
+    val exitSpeedMps: Double? = null,
+    val dtSec: Double? = null,
+    val stepM: Double? = null,
   )
 
   private fun gpsWindowAccel(): GpsAccel {
@@ -342,7 +364,16 @@ class TripAnalyzer(
     } else if (speedsOk) {
       yawRate = 0.0
     }
-    return GpsAccel(longitudinal, lateral, yawRate, pathOnlyLateral)
+    return GpsAccel(
+      longitudinal,
+      lateral,
+      yawRate,
+      pathOnlyLateral,
+      prevSpeed,
+      currentSpeed,
+      dtSec,
+      haversineM(prev, current),
+    )
   }
 
   private fun meanVerticalGyro(fromT: Double, toT: Double): Double? {
@@ -424,6 +455,76 @@ class TripAnalyzer(
     return null
   }
 
+  private fun clearBrakeAxis() {
+    brakeForward = null
+    brakeForwardGravity = null
+    imuBrakeSinceT = null
+    imuBrakeLastT = null
+    imuBrakePeak = 0.0
+  }
+
+  private fun resolveImuBrake(t: Double): Double? {
+    val sample = lastImu ?: return null
+    if (openHandheld != null) {
+      clearBrakeAxis()
+      return null
+    }
+    val gravity = sample.gravity
+    val forwardNow = brakeForward
+    if (forwardNow != null && gravityTiltDeg(brakeForwardGravity, gravity) > IMU_BRAKE_AXIS_TILT_DEG) {
+      clearBrakeAxis()
+      return null
+    }
+
+    val speedNow = currentSpeed()
+    val gpsLong = longitudinalAccelMps2
+    val linear = sampleLinearAccel(sample)
+    val share = verticalShare(linear, gravity)
+    if (
+      speedNow != null &&
+      speedNow >= IMU_BRAKE_LEARN_MIN_MPS &&
+      gpsLong != null &&
+      share <= config.impactVerticalMax
+    ) {
+      val pointed = forwardSampleFromGps(horizontalLinear(linear, gravity), gpsLong)
+      if (pointed != null) {
+        brakeForward = blendForwardAxis(brakeForward, pointed)
+        brakeForwardGravity = gravity?.let { copyVec(it) }
+      }
+    }
+
+    val forward = brakeForward
+    val lastMoving = lastMovingAtMs
+    val settled = t - startedAtMs >= config.jerkSettleMs
+    val recent = lastMoving != null && t - lastMoving <= IMU_BRAKE_RECENT_MS
+    val braking = if (forward == null) 0.0 else brakeAlongForward(horizontalLinear(linear, gravity), forward)
+    val holding =
+      forward != null &&
+        settled &&
+        recent &&
+        share <= config.impactVerticalMax &&
+        braking >= config.harshBrakeMps2
+    if (!holding) {
+      imuBrakeSinceT = null
+      imuBrakeLastT = null
+      imuBrakePeak = 0.0
+      return null
+    }
+    val since = imuBrakeSinceT
+    val last = imuBrakeLastT
+    if (since == null || last == null || t - last > IMU_BRAKE_GAP_MS) {
+      imuBrakeSinceT = t
+      imuBrakePeak = braking
+    }
+    imuBrakeLastT = t
+    imuBrakePeak = max(imuBrakePeak, braking)
+    val opened = imuBrakeSinceT ?: return null
+    if (t - opened < IMU_BRAKE_HOLD_MS) {
+      return null
+    }
+    return imuBrakePeak
+  }
+
   private fun detectFromMotion(t: Double, includeSmooth: Boolean = false): List<DrivingEvent> {
     val emitted = mutableListOf<DrivingEvent>()
     val speed = currentSpeed()
@@ -433,13 +534,19 @@ class TripAnalyzer(
     updateSpeedingSpan(t, speed, loc, moving)?.let { emitted.add(it) }
 
     val longAccel = longitudinalAccelMps2
-    if (moving && longAccel != null) {
-      if (longAccel >= config.harshAccelMps2) {
-        maybeEmit(EVENT_HARSH_ACCEL, t, longAccel, config.harshAccelMps2, loc, speed)?.let {
-          emitted.add(it)
-        }
-      } else if (longAccel <= -config.harshBrakeMps2) {
-        maybeEmit(EVENT_HARSH_BRAKE, t, abs(longAccel), config.harshBrakeMps2, loc, speed)?.let {
+    if (moving && longAccel != null && longAccel >= config.harshAccelMps2) {
+      maybeEmit(EVENT_HARSH_ACCEL, t, longAccel, config.harshAccelMps2, loc, speed)?.let {
+        emitted.add(it)
+      }
+    } else if (gpsHarshBrakeQualifies(gpsBrake, config.minSpeedMps, config.harshBrakeMps2)) {
+      maybeEmit(EVENT_HARSH_BRAKE, t, abs(longAccel ?: 0.0), config.harshBrakeMps2, loc, speed)?.let {
+        emitted.add(it)
+      }
+    }
+
+    if (!includeSmooth) {
+      resolveImuBrake(t)?.let { peak ->
+        maybeEmit(EVENT_HARSH_BRAKE, t, peak, config.harshBrakeMps2, loc, speed)?.let {
           emitted.add(it)
         }
       }

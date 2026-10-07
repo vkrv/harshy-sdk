@@ -955,3 +955,85 @@ func harshyDecidePendingImpact(
   if lookaheadElapsed || force { return .discard }
   return .wait
 }
+
+let harshyBrakeMinDropMps = 2.0
+let harshyBrakePathSpeedX = 0.75
+let harshyImuBrakeHoldMs = 300.0
+let harshyImuBrakeGapMs = 150.0
+let harshyImuBrakeLearnMinMps = 3.0
+let harshyImuBrakeLearnMinMps2 = 0.8
+let harshyImuBrakeMinHorizontalMps2 = 0.5
+let harshyImuBrakeAxisAlpha = 0.15
+let harshyImuBrakeAxisTiltDeg = 20.0
+let harshyImuBrakeRecentMs = 4000.0
+
+struct HarshyGpsBrakeSample {
+  var longitudinal: Double? = nil
+  var entrySpeedMps: Double? = nil
+  var exitSpeedMps: Double? = nil
+  var dtSec: Double? = nil
+  var stepM: Double? = nil
+}
+
+func harshyGpsHarshBrakeQualifies(
+  _ sample: HarshyGpsBrakeSample,
+  minSpeedMps: Double,
+  harshBrakeMps2: Double
+) -> Bool {
+  guard
+    let longitudinal = sample.longitudinal,
+    let entry = sample.entrySpeedMps,
+    let exit = sample.exitSpeedMps,
+    longitudinal <= -harshBrakeMps2
+  else {
+    return false
+  }
+  if exit >= minSpeedMps { return true }
+  if entry < minSpeedMps || entry - exit < harshyBrakeMinDropMps { return false }
+  guard let dt = sample.dtSec, let step = sample.stepM, dt > 0 else { return false }
+  return step / dt < entry * harshyBrakePathSpeedX
+}
+
+func harshyHorizontalLinear(_ linear: HarshyVec3, gravity: HarshyVec3?) -> HarshyVec3 {
+  guard let gravity else {
+    return HarshyVec3(x: linear.x, y: linear.y, z: 0)
+  }
+  let g2 = gravity.x * gravity.x + gravity.y * gravity.y + gravity.z * gravity.z
+  if g2 < 0.25 { return linear }
+  let along = (linear.x * gravity.x + linear.y * gravity.y + linear.z * gravity.z) / g2
+  return HarshyVec3(
+    x: linear.x - gravity.x * along,
+    y: linear.y - gravity.y * along,
+    z: linear.z - gravity.z * along
+  )
+}
+
+func harshyForwardSampleFromGps(_ horizontal: HarshyVec3, gpsLongitudinal: Double) -> HarshyVec3? {
+  if abs(gpsLongitudinal) < harshyImuBrakeLearnMinMps2 { return nil }
+  if harshyMagnitude(horizontal) < harshyImuBrakeMinHorizontalMps2 { return nil }
+  let sign = gpsLongitudinal >= 0 ? 1.0 : -1.0
+  return HarshyVec3(x: horizontal.x * sign, y: horizontal.y * sign, z: horizontal.z * sign)
+}
+
+func harshyBlendForwardAxis(
+  _ current: HarshyVec3?,
+  sample: HarshyVec3,
+  alpha: Double = harshyImuBrakeAxisAlpha
+) -> HarshyVec3? {
+  let length = harshyMagnitude(sample)
+  if length < 1e-6 { return current }
+  let incoming = HarshyVec3(x: sample.x / length, y: sample.y / length, z: sample.z / length)
+  guard let current else { return incoming }
+  let mixed = HarshyVec3(
+    x: current.x * (1 - alpha) + incoming.x * alpha,
+    y: current.y * (1 - alpha) + incoming.y * alpha,
+    z: current.z * (1 - alpha) + incoming.z * alpha
+  )
+  let mixedLength = harshyMagnitude(mixed)
+  if mixedLength < 1e-6 { return current }
+  return HarshyVec3(x: mixed.x / mixedLength, y: mixed.y / mixedLength, z: mixed.z / mixedLength)
+}
+
+func harshyBrakeAlongForward(_ horizontal: HarshyVec3, forward: HarshyVec3) -> Double {
+  -(horizontal.x * forward.x + horizontal.y * forward.y + horizontal.z * forward.z)
+}

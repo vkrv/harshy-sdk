@@ -1,3 +1,16 @@
+import {
+  IMU_BRAKE_AXIS_TILT_DEG,
+  IMU_BRAKE_GAP_MS,
+  IMU_BRAKE_HOLD_MS,
+  IMU_BRAKE_LEARN_MIN_MPS,
+  IMU_BRAKE_RECENT_MS,
+  blendForwardAxis,
+  brakeAlongForward,
+  forwardSampleFromGps,
+  gpsHarshBrakeQualifies,
+  horizontalLinear,
+  type GpsBrakeSample,
+} from "./brake.js";
 import { tagCompoundOverlaps } from "./compound.js";
 import {
   mergeDetectorConfig,
@@ -60,6 +73,9 @@ import {
   advanceImpactPulse,
   decideClosedPulse,
   decidePendingImpact,
+  gravityTiltDeg,
+  sampleLinearAccel,
+  verticalShare,
   type ImpactPulse,
   type PendingImpact,
 } from "./impact.js";
@@ -83,6 +99,7 @@ import type {
   TripMetrics,
   TripTrigger,
   NativeStartOptions,
+  Vec3,
 } from "./types.js";
 
 export type TripAnalyzerOptions = {
@@ -170,6 +187,17 @@ type AnalyzerState = {
   swerveElevatedAtSpeed: number | null;
   /** True if any elevated sample lacked gyro confirmation. */
   swerveElevatedPathOnly: boolean;
+  /** Latest GPS step used to decide a harsh brake. */
+  gpsBrake: GpsBrakeSample;
+  /** Last time GPS speed was still at or above `minSpeedMps`. */
+  lastMovingAtMs: number | null;
+  /** Phone-frame unit vector pointing toward vehicle forward. */
+  brakeForward: Vec3 | null;
+  /** Gravity when `brakeForward` was last learned. */
+  brakeForwardGravity: Vec3 | null;
+  imuBrakeSinceT: number | null;
+  imuBrakeLastT: number | null;
+  imuBrakePeak: number;
   maxSpeedMps: number | null;
   speedSum: number;
   speedCount: number;
@@ -286,16 +314,30 @@ function maybeEmit(
 const GPS_ACCEL_MIN_DT_SEC = 0.2;
 const GPS_ACCEL_MAX_DT_SEC = 8;
 
-function gpsWindowAccel(state: AnalyzerState): {
-  longitudinal: number | null;
+type GpsWindowAccel = GpsBrakeSample & {
   lateral: number | null;
   yawRateRadps: number | null;
   pathOnlyLateral: boolean;
-} {
+};
+
+function emptyGpsWindow(): GpsWindowAccel {
+  return {
+    longitudinal: null,
+    lateral: null,
+    yawRateRadps: null,
+    pathOnlyLateral: false,
+    entrySpeedMps: null,
+    exitSpeedMps: null,
+    dtSec: null,
+    stepM: null,
+  };
+}
+
+function gpsWindowAccel(state: AnalyzerState): GpsWindowAccel {
   const { gpsAccelWindowMs } = state.config;
   const current = state.lastGoodLocation;
   if (!current || current.speedMps == null) {
-    return { longitudinal: null, lateral: null, yawRateRadps: null, pathOnlyLateral: false };
+    return emptyGpsWindow();
   }
 
   let previous: LocationSample | null = null;
@@ -315,12 +357,12 @@ function gpsWindowAccel(state: AnalyzerState): {
   }
 
   if (!previous || previous.speedMps == null) {
-    return { longitudinal: null, lateral: null, yawRateRadps: null, pathOnlyLateral: false };
+    return emptyGpsWindow();
   }
 
   const dtSec = (current.t - previous.t) / 1000;
   if (dtSec < GPS_ACCEL_MIN_DT_SEC || dtSec > GPS_ACCEL_MAX_DT_SEC) {
-    return { longitudinal: null, lateral: null, yawRateRadps: null, pathOnlyLateral: false };
+    return emptyGpsWindow();
   }
 
   const longitudinal = (current.speedMps - previous.speedMps) / dtSec;
@@ -367,7 +409,16 @@ function gpsWindowAccel(state: AnalyzerState): {
     yawRateRadps = 0;
   }
 
-  return { longitudinal, lateral, yawRateRadps, pathOnlyLateral };
+  return {
+    longitudinal,
+    lateral,
+    yawRateRadps,
+    pathOnlyLateral,
+    entrySpeedMps: previous.speedMps,
+    exitSpeedMps: current.speedMps,
+    dtSec,
+    stepM: haversineM(previous, current),
+  };
 }
 
 /** Path chords shorter than accuracy noise are not a reliable heading. */
@@ -473,6 +524,84 @@ function updateSpeedingSpan(
   return null;
 }
 
+function clearBrakeAxis(state: AnalyzerState): void {
+  state.brakeForward = null;
+  state.brakeForwardGravity = null;
+  state.imuBrakeSinceT = null;
+  state.imuBrakeLastT = null;
+  state.imuBrakePeak = 0;
+}
+
+function copyVec(vector: Vec3): Vec3 {
+  return { x: vector.x, y: vector.y, z: vector.z };
+}
+
+/** Learn or drop the phone-frame forward axis, then hold a horizontal brake. */
+function resolveImuBrake(state: AnalyzerState, sample: ImuSample, t: number): number | null {
+  if (state.openHandheld != null) {
+    clearBrakeAxis(state);
+    return null;
+  }
+  const gravity = sample.gravity;
+  if (
+    state.brakeForward != null &&
+    gravityTiltDeg(state.brakeForwardGravity, gravity) > IMU_BRAKE_AXIS_TILT_DEG
+  ) {
+    clearBrakeAxis(state);
+    return null;
+  }
+
+  const speed = currentSpeed(state);
+  const gpsLong = state.longitudinalAccelMps2;
+  const linear = sampleLinearAccel(sample);
+  const share = verticalShare(linear, gravity);
+  if (
+    speed != null &&
+    speed >= IMU_BRAKE_LEARN_MIN_MPS &&
+    gpsLong != null &&
+    share <= state.config.impactVerticalMax
+  ) {
+    const pointed = forwardSampleFromGps(horizontalLinear(linear, gravity), gpsLong);
+    if (pointed) {
+      state.brakeForward = blendForwardAxis(state.brakeForward, pointed);
+      state.brakeForwardGravity = gravity ? copyVec(gravity) : null;
+    }
+  }
+
+  const forward = state.brakeForward;
+  const lastMoving = state.lastMovingAtMs;
+  const settled = t - state.startedAtMs >= state.config.jerkSettleMs;
+  const recent = lastMoving != null && t - lastMoving <= IMU_BRAKE_RECENT_MS;
+  const braking =
+    forward == null ? 0 : brakeAlongForward(horizontalLinear(linear, gravity), forward);
+  const holding =
+    forward != null &&
+    settled &&
+    recent &&
+    share <= state.config.impactVerticalMax &&
+    braking >= state.config.harshBrakeMps2;
+  if (!holding) {
+    state.imuBrakeSinceT = null;
+    state.imuBrakeLastT = null;
+    state.imuBrakePeak = 0;
+    return null;
+  }
+  if (
+    state.imuBrakeSinceT == null ||
+    state.imuBrakeLastT == null ||
+    t - state.imuBrakeLastT > IMU_BRAKE_GAP_MS
+  ) {
+    state.imuBrakeSinceT = t;
+    state.imuBrakePeak = braking;
+  }
+  state.imuBrakeLastT = t;
+  state.imuBrakePeak = Math.max(state.imuBrakePeak, braking);
+  if (t - state.imuBrakeSinceT < IMU_BRAKE_HOLD_MS) {
+    return null;
+  }
+  return state.imuBrakePeak;
+}
+
 function detectFromMotion(
   state: AnalyzerState,
   t: number,
@@ -488,26 +617,45 @@ function detectFromMotion(
     emitted.push(speeding);
   }
 
-  if (moving && state.longitudinalAccelMps2 != null) {
-    if (state.longitudinalAccelMps2 >= state.config.harshAccelMps2) {
-      const event = maybeEmit(
-        state,
-        "harsh_accel",
-        t,
-        state.longitudinalAccelMps2,
-        state.config.harshAccelMps2,
-        location,
-        speed,
-      );
-      if (event) {
-        emitted.push(event);
-      }
-    } else if (state.longitudinalAccelMps2 <= -state.config.harshBrakeMps2) {
+  const longAccel = state.longitudinalAccelMps2;
+  if (moving && longAccel != null && longAccel >= state.config.harshAccelMps2) {
+    const event = maybeEmit(
+      state,
+      "harsh_accel",
+      t,
+      longAccel,
+      state.config.harshAccelMps2,
+      location,
+      speed,
+    );
+    if (event) {
+      emitted.push(event);
+    }
+  } else if (
+    gpsHarshBrakeQualifies(state.gpsBrake, state.config.minSpeedMps, state.config.harshBrakeMps2)
+  ) {
+    const event = maybeEmit(
+      state,
+      "harsh_brake",
+      t,
+      Math.abs(longAccel ?? 0),
+      state.config.harshBrakeMps2,
+      location,
+      speed,
+    );
+    if (event) {
+      emitted.push(event);
+    }
+  }
+
+  if (!includeSmooth && state.lastImu) {
+    const imuBrake = resolveImuBrake(state, state.lastImu, t);
+    if (imuBrake != null) {
       const event = maybeEmit(
         state,
         "harsh_brake",
         t,
-        Math.abs(state.longitudinalAccelMps2),
+        imuBrake,
         state.config.harshBrakeMps2,
         location,
         speed,
@@ -1368,6 +1516,19 @@ export function createTripAnalyzer(
     pendingImpact: null,
     longitudinalAccelMps2: null,
     lateralAccelMps2: null,
+    gpsBrake: {
+      longitudinal: null,
+      entrySpeedMps: null,
+      exitSpeedMps: null,
+      dtSec: null,
+      stepM: null,
+    },
+    lastMovingAtMs: null,
+    brakeForward: null,
+    brakeForwardGravity: null,
+    imuBrakeSinceT: null,
+    imuBrakeLastT: null,
+    imuBrakePeak: 0,
     yawRateRadps: null,
     prevYawRateRadps: null,
     prevYawAtT: null,
@@ -1430,6 +1591,16 @@ export function createTripAnalyzer(
     state.lateralAccelMps2 = accel.lateral;
     state.yawRateRadps = accel.yawRateRadps;
     state.pathOnlyLateral = accel.pathOnlyLateral;
+    state.gpsBrake = {
+      longitudinal: accel.longitudinal,
+      entrySpeedMps: accel.entrySpeedMps,
+      exitSpeedMps: accel.exitSpeedMps,
+      dtSec: accel.dtSec,
+      stepM: accel.stepM,
+    };
+    if (withRoad.speedMps != null && withRoad.speedMps >= state.config.minSpeedMps) {
+      state.lastMovingAtMs = withRoad.t;
+    }
     const yaw = accel.yawRateRadps;
     state.yawJerkRadps2 =
       yaw == null

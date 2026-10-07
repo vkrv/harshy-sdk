@@ -67,6 +67,11 @@ class AndroidSamplesTest {
   }
 
   @Test
+  fun emptySensorArrayMapsToZero() {
+    assertEquals(Vec3(0.0, 0.0, 0.0), floatArrayOf().toVec3())
+  }
+
+  @Test
   fun shortSensorArraysPadWithZero() {
     assertEquals(Vec3(1.0, 0.0, 0.0), floatArrayOf(1f).toVec3())
   }

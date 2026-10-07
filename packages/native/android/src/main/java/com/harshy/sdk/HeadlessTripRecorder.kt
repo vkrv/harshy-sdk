@@ -25,7 +25,7 @@ class HeadlessTripRecorder(
   private val sessionId: String,
   private val listener: Listener,
   private val detector: DetectorConfig? = null,
-  private val capture: NativeStartOptions = NativeStartOptions(background = false),
+  capture: NativeStartOptions = NativeStartOptions(background = false),
   private val device: DeviceInfo = DeviceInfo(platform = "android", model = Build.MODEL),
   private val trigger: String = "manual",
   /** IMU ring size passed to [TripAnalyzer]; keep it small when raw IMU is not exported. */
@@ -45,9 +45,13 @@ class HeadlessTripRecorder(
   }
 
   private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-  private val imuHz = capture.imuHz.coerceIn(IMU_HZ_RANGE)
-  private val tickMs = (MILLIS_PER_SECOND / imuHz).coerceAtLeast(MIN_TICK_MS)
-  private val throttle = LocationThrottle(capture.locationIntervalMs)
+  // One clamped copy drives the tick, the throttle and the exported settings, so they always agree.
+  private val capture = capture.copy(
+    imuHz = capture.imuHz.coerceIn(IMU_HZ_RANGE),
+    locationIntervalMs = capture.locationIntervalMs.coerceIn(LOCATION_INTERVAL_MS_RANGE),
+  )
+  private val tickMs = (MILLIS_PER_SECOND / this.capture.imuHz).coerceAtLeast(MIN_TICK_MS)
+  private val throttle = LocationThrottle(this.capture.locationIntervalMs)
   private val thread = HandlerThread(THREAD_NAME)
   private var handler: Handler? = null
   private var analyzer: TripAnalyzer? = null
@@ -93,8 +97,9 @@ class HeadlessTripRecorder(
     thread.start()
     val looper = Handler(thread.looper)
     handler = looper
+    // Not `guarded`: a stop() queued right behind start() must still find an analyzer to finalize.
     looper.post {
-      guarded {
+      try {
         val startedAtMs = clock.nowMs()
         analyzer = TripAnalyzer(
           configInput = detector,
@@ -103,7 +108,7 @@ class HeadlessTripRecorder(
           device = device,
           trigger = trigger,
           capture = capture,
-          imuHz = imuHz,
+          imuHz = capture.imuHz,
           maxImuSamples = maxImuSamples,
         )
         val sensors = SENSORS.filter { (type, _) -> sensorManager.getDefaultSensor(type) != null }
@@ -111,7 +116,15 @@ class HeadlessTripRecorder(
           sensorManager.registerListener(sensorListener, sensorManager.getDefaultSensor(type), SensorManager.SENSOR_DELAY_GAME, looper)
         }
         listener.onStarted(startedAtMs, sensors.map { it.second })
-        looper.post(tick)
+        if (!stopped) {
+          looper.post(tick)
+        }
+      } catch (error: Exception) {
+        listener.onError(error)
+        if (!stopped) {
+          stopped = true
+          shutdown()
+        }
       }
     }
   }
@@ -122,11 +135,12 @@ class HeadlessTripRecorder(
     if (stopped) {
       return
     }
-    val tMs = clock.nowMs()
+    // Convert on the caller's thread: `Location` is mutable and may be reused after this returns.
+    val sample = location.toLocationSample(clock.nowMs())
     looper.post {
       guarded {
-        if (throttle.accept(tMs)) {
-          analyzer?.pushLocation(location.toLocationSample(tMs))?.let(listener::onPush)
+        if (throttle.accept(sample.t.toLong())) {
+          analyzer?.pushLocation(sample)?.let(listener::onPush)
         }
       }
     }

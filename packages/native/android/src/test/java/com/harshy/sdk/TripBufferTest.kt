@@ -52,9 +52,18 @@ class TripBufferTest {
 
   @Test
   fun aShortImuWindowDetectsTheSameTripAsTheFullBuffer() {
+    assertShortWindowMatchesFullBuffer(dropSpeedEvery = 0)
+  }
+
+  @Test
+  fun aShortImuWindowMatchesWhenSomeFixesLackSpeed() {
+    assertShortWindowMatchesFullBuffer(dropSpeedEvery = 3)
+  }
+
+  private fun assertShortWindowMatchesFullBuffer(dropSpeedEvery: Int) {
     val full = analyzer(maxImuSamples = null)
     val short = analyzer(maxImuSamples = 50)
-    streamTrip { sample ->
+    streamTrip(dropSpeedEvery) { sample ->
       when (sample) {
         is LocationSample -> {
           full.pushLocation(sample)
@@ -97,7 +106,7 @@ class TripBufferTest {
   }
 
   // 120 s trip: accelerate to 15 m/s, cruise on a bumpy road, brake hard to 7 m/s, cruise.
-  private fun streamTrip(push: (Any) -> Unit) {
+  private fun streamTrip(dropSpeedEvery: Int, push: (Any) -> Unit) {
     val lat = 32.0
     val metersPerDegLon = 111_320.0 * cos(Math.toRadians(lat))
     var lon = 34.0
@@ -115,7 +124,8 @@ class TripBufferTest {
         }.coerceAtLeast(0.0)
         lon += speed * ((t - lastFixT) / 1_000.0) / metersPerDegLon
         lastFixT = t
-        push(LocationSample(t = t, lat = lat, lon = lon, speedMps = speed, courseDeg = 90.0, accuracyM = 4.0))
+        val reported = if (dropSpeedEvery > 0 && second % dropSpeedEvery == 1) null else speed
+        push(LocationSample(t = t, lat = lat, lon = lon, speedMps = reported, courseDeg = 90.0, accuracyM = 4.0))
       }
       t += 40.0
     }

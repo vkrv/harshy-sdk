@@ -1550,16 +1550,16 @@ export function createTripAnalyzer(
   };
 
   const commitLocation = (sample: LocationSample) => {
-
+    const speedMps = derivedSpeedMps(state.lastGoodLocation, sample) ?? sample.speedMps;
     const withRoad: LocationSample = {
       ...sample,
-      speedMps: derivedSpeedMps(state.lastGoodLocation, sample) ?? sample.speedMps,
+      speedMps,
       // Keep the OS chip course as-is. Filling from the path made every yaw look
       // chip-confirmed and defeated path-only GPS noise gates.
       courseDeg: sample.courseDeg,
       roadRmsMps2:
         sample.roadRmsMps2 ??
-        roadRmsForLocation(sample, state.imu, {
+        roadRmsForLocation({ ...sample, speedMps }, state.imu, {
           startedAtMs: state.startedAtMs,
           jerkSettleMs: state.config.jerkSettleMs,
           minSpeedMps: state.config.minSpeedMps,

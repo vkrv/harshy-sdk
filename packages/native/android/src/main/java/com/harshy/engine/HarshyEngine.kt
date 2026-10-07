@@ -22,12 +22,14 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.harshy.sdk.HarshyClock
 import com.harshy.sdk.IMU_HZ_RANGE
 import com.harshy.sdk.LOCATION_INTERVAL_MS_RANGE
+import com.harshy.sdk.MonotonicEpochClock
 import com.harshy.sdk.toLocationSample
 import java.util.ArrayDeque
 import java.util.Collections
@@ -43,8 +45,12 @@ import java.util.function.Consumer
  * persists a separate flag so “Waiting for a drive” survives the same kill.
  */
 class HarshyEngine(private val context: Context) : SensorEventListener, LocationListener {
-  /** One time base for every sample `t` and every comparison against it. */
-  private val clock: HarshyClock = HarshyClock.monotonic()
+  /**
+   * One time base for every sample `t` and every comparison against it. [HarshyClient] stamps trip
+   * start and end with it too. Replaced on restore so a recovered trip keeps its time base.
+   */
+  @Volatile internal var clock: HarshyClock = HarshyClock.monotonic()
+    private set
   interface Listener {
     fun onLocation(sample: Map<String, Any?>)
     fun onImuBatch(samples: List<Map<String, Any?>>)
@@ -220,6 +226,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
           locationIntervalMs = locationIntervalMs,
           background = background,
           trigger = tripTrigger,
+          clockOffsetMs = (clock as? MonotonicEpochClock)?.epochOffsetMs,
+          bootCount = bootCount(),
         ),
       )
       if (previewing) {
@@ -297,6 +305,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
         journal.clear()
         return false
       }
+      restoredClockOffsetMs(meta, bootCount())?.let { clock = HarshyClock.monotonic(it) }
       sessionId = meta.sessionId
       startedAtMs = meta.startedAtMs
       imuHz = meta.imuHz.coerceIn(IMU_HZ_RANGE)
@@ -1027,6 +1036,14 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   @SuppressLint("WakelockTimeout")
+  private fun bootCount(): Int? {
+    return try {
+      Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1).takeIf { it >= 0 }
+    } catch (_: Exception) {
+      null
+    }
+  }
+
   private fun acquireWakeLock() {
     if (wakeLock?.isHeld == true) {
       return

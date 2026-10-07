@@ -36,6 +36,10 @@ internal class TripJournal(context: Context) {
     val locationIntervalMs: Long,
     val background: Boolean,
     val trigger: String = "manual",
+    /** Epoch offset of the clock that stamped this trip, reused on restore within the same boot. */
+    val clockOffsetMs: Long? = null,
+    /** `Settings.Global.BOOT_COUNT` when the trip started; a restore after a reboot cannot reuse the offset. */
+    val bootCount: Int? = null,
   )
 
   data class Loaded(
@@ -347,7 +351,7 @@ internal fun parseTripTrigger(value: String?): String {
 }
 
 internal fun tripJournalMetaPayload(meta: TripJournal.Meta): Map<String, Any> {
-  return mapOf(
+  val payload = mutableMapOf<String, Any>(
     "active" to true,
     "sessionId" to meta.sessionId,
     "startedAtMs" to meta.startedAtMs,
@@ -356,6 +360,16 @@ internal fun tripJournalMetaPayload(meta: TripJournal.Meta): Map<String, Any> {
     "background" to meta.background,
     "trigger" to parseTripTrigger(meta.trigger),
   )
+  meta.clockOffsetMs?.let { payload["clockOffsetMs"] = it }
+  meta.bootCount?.let { payload["bootCount"] = it }
+  return payload
+}
+
+/** The journaled clock offset when it is still valid: same boot, both fields recorded. */
+internal fun restoredClockOffsetMs(meta: TripJournal.Meta, currentBootCount: Int?): Long? {
+  val offset = meta.clockOffsetMs ?: return null
+  val bootCount = meta.bootCount ?: return null
+  return if (currentBootCount != null && bootCount == currentBootCount) offset else null
 }
 
 internal fun tripJournalMetaFromFields(
@@ -366,6 +380,8 @@ internal fun tripJournalMetaFromFields(
   locationIntervalMs: Long,
   background: Boolean,
   trigger: String?,
+  clockOffsetMs: Long? = null,
+  bootCount: Int? = null,
 ): TripJournal.Meta? {
   if (!active) {
     return null
@@ -380,6 +396,8 @@ internal fun tripJournalMetaFromFields(
     locationIntervalMs = locationIntervalMs,
     background = background,
     trigger = parseTripTrigger(trigger),
+    clockOffsetMs = clockOffsetMs,
+    bootCount = bootCount,
   )
 }
 
@@ -400,6 +418,8 @@ internal fun tripJournalMetaFromJson(json: JSONObject): TripJournal.Meta? {
     locationIntervalMs = json.optLong("locationIntervalMs", 500L),
     background = json.optBoolean("background", true),
     trigger = json.optString("trigger"),
+    clockOffsetMs = if (json.has("clockOffsetMs")) json.optLong("clockOffsetMs") else null,
+    bootCount = if (json.has("bootCount")) json.optInt("bootCount") else null,
   )
 }
 

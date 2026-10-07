@@ -123,7 +123,7 @@ recorder.stop()                  // finalizes on the recorder thread
 
 `HeadlessTripRecorder` registers the IMU sensors the detector reads, samples them at `capture.imuHz`, thins offered locations to `capture.locationIntervalMs`, and stamps every sample with `HarshyClock`. Listener callbacks run on its thread. Hosts that capture samples themselves can use the same pieces directly: `HarshyClock.monotonic()`, `Location.toLocationSample`, `imuSampleOf`, `TripAnalyzer(..., maxImuSamples = ...)` and `compactSessionExport`. Stamp samples with `HarshyClock`, not `System.currentTimeMillis()`: a wall-clock correction mid-trip would shift `t` and distort speed and acceleration deltas.
 
-`parseDetectorConfig(map)` and `parseNativeStartOptions(map)` read loosely typed maps such as remote configuration: unknown keys are ignored, and a value outside the `@harshy/core` schema bounds keeps the base value.
+`parseDetectorConfig(map)` and `parseNativeStartOptions(map)` read loosely typed maps such as remote configuration, and both ignore unknown keys. A detector value that is not a number or breaks the `@harshy/core` schema bounds keeps the base value. Capture rates are clamped instead: `imuHz` to `IMU_HZ_RANGE` and `locationIntervalMs` to `LOCATION_INTERVAL_MS_RANGE`.
 
 ## Native iOS
 

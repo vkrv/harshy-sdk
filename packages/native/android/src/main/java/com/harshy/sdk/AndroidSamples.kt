@@ -27,7 +27,7 @@ fun Location.toLocationSample(tMs: Long): LocationSample {
 /** Vector from a `SensorEvent.values` copy. Missing axes read as 0. */
 fun FloatArray.toVec3(): Vec3 {
   return Vec3(
-    x = this[0].toDouble(),
+    x = if (size > 0) this[0].toDouble() else 0.0,
     y = if (size > 1) this[1].toDouble() else 0.0,
     z = if (size > 2) this[2].toDouble() else 0.0,
   )

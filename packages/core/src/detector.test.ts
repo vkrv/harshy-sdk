@@ -1220,7 +1220,18 @@ describe("detector", () => {
     expect(session.location[0]?.roadRmsMps2).toBeGreaterThan(1);
   });
   it("keeps the same detection with a short IMU window", () => {
+    expectShortWindowMatchesFullBuffer(generateSampleTrip());
+  });
+
+  it("keeps the same road RMS with a short IMU window when fixes lack speed", () => {
     const trip = generateSampleTrip();
+    expectShortWindowMatchesFullBuffer({
+      ...trip,
+      location: trip.location.map((sample, i) => (i % 3 === 1 ? { ...sample, speedMps: null } : sample)),
+    });
+  });
+
+  function expectShortWindowMatchesFullBuffer(trip: ReturnType<typeof generateSampleTrip>) {
     const stream = (maxImuSamples?: number) => {
       const analyzer = createTripAnalyzer(undefined, {
         sessionId: trip.sessionId,
@@ -1255,5 +1266,5 @@ describe("detector", () => {
     expect(short.location.map((sample) => sample.roadRmsMps2)).toEqual(
       full.location.map((sample) => sample.roadRmsMps2),
     );
-  });
+  }
 });

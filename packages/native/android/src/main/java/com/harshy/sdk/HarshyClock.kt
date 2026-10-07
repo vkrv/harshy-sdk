@@ -16,14 +16,19 @@ fun interface HarshyClock {
   companion object {
     /** Epoch milliseconds that advance with the boot clock. The epoch offset is fixed at creation. */
     fun monotonic(): HarshyClock = MonotonicEpochClock(SystemClock::elapsedRealtime, System::currentTimeMillis)
+
+    /** Same time base as an earlier [monotonic] clock in this boot, from its [MonotonicEpochClock.epochOffsetMs]. */
+    internal fun monotonic(epochOffsetMs: Long): HarshyClock =
+      MonotonicEpochClock(SystemClock::elapsedRealtime, epochOffsetMs)
   }
 }
 
 internal class MonotonicEpochClock(
   private val elapsedRealtimeMs: () -> Long,
-  wallClockMs: () -> Long,
+  val epochOffsetMs: Long,
 ) : HarshyClock {
-  private val epochOffsetMs: Long = wallClockMs() - elapsedRealtimeMs()
+  constructor(elapsedRealtimeMs: () -> Long, wallClockMs: () -> Long) :
+    this(elapsedRealtimeMs, wallClockMs() - elapsedRealtimeMs())
 
   override fun nowMs(): Long = epochOffsetMs + elapsedRealtimeMs()
 }

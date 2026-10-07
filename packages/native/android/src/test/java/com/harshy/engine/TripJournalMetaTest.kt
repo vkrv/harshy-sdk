@@ -2,6 +2,7 @@ package com.harshy.engine
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.json.JSONObject
 import org.junit.Test
 
 class TripJournalMetaTest {
@@ -59,5 +60,39 @@ class TripJournalMetaTest {
         trigger = null,
       ),
     )
+  }
+
+  @Test
+  fun clockOffsetAndBootCountRoundTrip() {
+    val meta = TripJournal.Meta(
+      sessionId = "trip-c",
+      startedAtMs = 5L,
+      imuHz = 25,
+      locationIntervalMs = 1_000L,
+      background = false,
+      clockOffsetMs = 1_699_999_000_000L,
+      bootCount = 42,
+    )
+    val parsed = tripJournalMetaFromJson(JSONObject(tripJournalMetaToJson(meta).toString()))!!
+    assertEquals(1_699_999_000_000L, parsed.clockOffsetMs)
+    assertEquals(42, parsed.bootCount)
+  }
+
+  @Test
+  fun olderJournalsWithoutClockFieldsStillParse() {
+    val json = JSONObject().put("active", true).put("sessionId", "trip-d").put("startedAtMs", 7L)
+    val parsed = tripJournalMetaFromJson(json)!!
+    assertNull(parsed.clockOffsetMs)
+    assertNull(parsed.bootCount)
+  }
+
+  @Test
+  fun restoreReusesTheClockOffsetOnlyWithinTheSameBoot() {
+    val meta = TripJournal.Meta("trip-e", 1L, 25, 1_000L, false, clockOffsetMs = 123L, bootCount = 7)
+    assertEquals(123L, restoredClockOffsetMs(meta, currentBootCount = 7))
+    assertNull(restoredClockOffsetMs(meta, currentBootCount = 8))
+    assertNull(restoredClockOffsetMs(meta, currentBootCount = null))
+    assertNull(restoredClockOffsetMs(meta.copy(bootCount = null), currentBootCount = 7))
+    assertNull(restoredClockOffsetMs(meta.copy(clockOffsetMs = null), currentBootCount = 7))
   }
 }

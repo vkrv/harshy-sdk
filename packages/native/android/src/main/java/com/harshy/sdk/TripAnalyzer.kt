@@ -118,11 +118,11 @@ class TripAnalyzer(
   private fun commitLocation(sample: LocationSample): AnalyzerPush {
     // Keep the OS chip course as-is. Filling from the path made every yaw look
     // chip-confirmed and defeated path-only GPS noise gates.
-    val stored = sample.copy(
-      speedMps = derivedSpeedMps(lastGoodLocation, sample) ?: sample.speedMps,
+    val withSpeed = sample.copy(speedMps = derivedSpeedMps(lastGoodLocation, sample) ?: sample.speedMps)
+    val stored = withSpeed.copy(
       courseDeg = sample.courseDeg,
       roadRmsMps2 = sample.roadRmsMps2 ?: roadRmsForLocation(
-        sample,
+        withSpeed,
         imu,
         startedAtMs = startedAtMs,
         jerkSettleMs = config.jerkSettleMs,

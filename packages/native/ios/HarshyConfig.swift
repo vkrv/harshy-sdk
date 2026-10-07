@@ -1,7 +1,7 @@
 import Foundation
 
 /** Monotonic SDK stamp on SessionExport. Bump with every intentional SDK change. */
-public let harshySdkVersion = 5
+public let harshySdkVersion = 6
 
 public let harshyScorePenaltyX = 1.0 / 2.0
 public let harshyScoreMax = 100.0

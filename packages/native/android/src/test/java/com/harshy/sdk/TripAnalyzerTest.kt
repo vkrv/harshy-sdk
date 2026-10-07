@@ -494,6 +494,34 @@ class TripAnalyzerTest {
   }
 
   @Test
+  fun paysTwoForTheFirstTenCleanKilometresAndOneAfter() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig.DEFAULT,
+      "clean-km",
+      0.0,
+      DeviceInfo("android", "test"),
+    )
+    var lat = 59.4
+    var lon = 24.8
+    analyzer.pushLocation(at(0.0, 12.0, 0.0, lat, lon))
+    for (step in 1..930) {
+      val next = shift(lat, lon, 0.0, 12.0)
+      lat = next.first
+      lon = next.second
+      analyzer.pushLocation(at(step * 1000.0, 12.0, 0.0, lat, lon))
+    }
+    val session = analyzer.finalize(930_000.0)
+    val kilometres = session.events.filter { it.type == EVENT_SMOOTH_KM }
+    assertEquals(11, kilometres.size)
+    assertEquals(2.0, kilometres[0].peak, 0.001)
+    assertEquals(2.0, kilometres[9].peak, 0.001)
+    assertEquals(1.0, kilometres[10].peak, 0.001)
+    assertEquals(21.0, session.metrics.points, 0.001)
+    assertEquals(100.0, session.metrics.score, 0.001)
+    assertFalse(session.events.any { it.type.startsWith("harsh_") })
+  }
+
+  @Test
   fun recordsGradualAccelAfterLongHold() {
     val analyzer = TripAnalyzer(
       DetectorConfig.DEFAULT,

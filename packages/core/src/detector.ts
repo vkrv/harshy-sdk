@@ -109,6 +109,8 @@ type SmoothHold = {
   sign?: number;
   /** Speed when an accel/brake hold began. Creep credits need a real change. */
   speedAtStartMps?: number;
+  /** Track heading when a corner hold began. */
+  headingAtStartDeg?: number;
 };
 
 export function isSmoothDrivingEvent(
@@ -704,7 +706,7 @@ function awardCleanKilometres(
       continue;
     }
     const kmNumber = index + 1;
-    const points = kmNumber <= 10 ? 3 : 2;
+    const points = kmNumber <= 10 ? 2 : 1;
     const event: DrivingEvent = {
       id: `smooth_km-${kmNumber}`,
       type: "smooth_km",
@@ -1251,8 +1253,17 @@ export function eventScorePoints(
   void event.severity;
   void event.overlaps;
   switch (event.type) {
-    case "smooth_km":
-      return (event.peak ?? 3) >= 2.5 ? 3 : 2;
+    case "smooth_km": {
+      // Peak stores the credit. Older trips kept 3 then 2; new trips store 2 then 1.
+      const stored = event.peak ?? 3;
+      if (stored >= 2.5) {
+        return 3;
+      }
+      if (stored >= 1.5) {
+        return 2;
+      }
+      return 1;
+    }
     case "smooth_accel":
     case "smooth_brake":
       return (event.peak ?? SMOOTH_FLOOR_MPS2) < SMOOTH_FLOOR_MPS2 ? 1 : 2;

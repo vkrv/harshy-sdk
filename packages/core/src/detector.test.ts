@@ -457,6 +457,9 @@ describe("detector", () => {
     expect(
       eventScorePoints({ ...brake, type: "smooth_km", peak: 2, overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
     ).toBe(2);
+    expect(
+      eventScorePoints({ ...brake, type: "smooth_km", peak: 1, overlaps: [] }, DEFAULT_DETECTOR_CONFIG, 5_000),
+    ).toBe(1);
   });
 
   it("starts at zero when there are no events", () => {
@@ -666,7 +669,7 @@ describe("detector", () => {
     expect(corners[0]?.peak).toBeLessThanOrEqual(3 * 0.6);
   });
 
-  it("pays 4 points when the first kilometre finishes clean", () => {
+  it("pays 2 for each of the first 10 clean kilometres and 1 after that", () => {
     const analyzer = createTripAnalyzer(undefined, {
       sessionId: "clean-km",
       startedAtMs: 0,
@@ -675,16 +678,17 @@ describe("detector", () => {
     let lat = 59.4;
     let lon = 24.8;
     analyzer.pushLocation(placed(0, 12, 0, lat, lon));
-    for (let step = 1; step <= 90; step += 1) {
+    for (let step = 1; step <= 930; step += 1) {
       const next = destination(lat, lon, 0, 12);
       lat = next.lat;
       lon = next.lon;
       analyzer.pushLocation(placed(step * 1000, 12, 0, lat, lon));
     }
     const kilometres = analyzer.getEvents().filter((event) => event.type === "smooth_km");
-    expect(kilometres).toHaveLength(1);
-    expect(kilometres[0]?.peak).toBe(3);
-    expect(analyzer.getMetrics().points).toBe(3);
+    expect(kilometres).toHaveLength(11);
+    expect(kilometres.slice(0, 10).every((event) => event.peak === 2)).toBe(true);
+    expect(kilometres[10]?.peak).toBe(1);
+    expect(analyzer.getMetrics().points).toBe(21);
     expect(analyzer.getMetrics().score).toBe(100);
     expect(analyzer.getEvents().some((event) => event.type.startsWith("harsh_"))).toBe(false);
   });

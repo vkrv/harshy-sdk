@@ -493,6 +493,33 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertEqual(session.metrics.score, 100, accuracy: 0.001)
   }
 
+  func testPaysTwoForTheFirstTenCleanKilometresAndOneAfter() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "clean-km",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    var lat = 59.4
+    var lon = 24.8
+    _ = analyzer.pushLocation(at(0, speedMps: 12, courseDeg: 0, lat: lat, lon: lon))
+    for step in 1...930 {
+      let next = shift(lat, lon, bearingDeg: 0, distanceM: 12)
+      lat = next.lat
+      lon = next.lon
+      _ = analyzer.pushLocation(at(Double(step) * 1000, speedMps: 12, courseDeg: 0, lat: lat, lon: lon))
+    }
+    let session = analyzer.finalize(endedAtMs: 930_000)
+    let kilometres = session.events.filter { $0.type == harshyEventSmoothKm }
+    XCTAssertEqual(kilometres.count, 11)
+    XCTAssertEqual(kilometres[0].peak, 2, accuracy: 0.001)
+    XCTAssertEqual(kilometres[9].peak, 2, accuracy: 0.001)
+    XCTAssertEqual(kilometres[10].peak, 1, accuracy: 0.001)
+    XCTAssertEqual(session.metrics.points, 21, accuracy: 0.001)
+    XCTAssertEqual(session.metrics.score, 100, accuracy: 0.001)
+    XCTAssertFalse(session.events.contains { $0.type.hasPrefix("harsh_") })
+  }
+
   func testRecordsGradualAccelAfterLongHold() {
     let analyzer = harshyCreateTripAnalyzer(
       config: nil,

@@ -571,7 +571,7 @@ class TripAnalyzer(
         continue
       }
       val kmNumber = index + 1
-      val points = if (kmNumber <= 10) 3.0 else 2.0
+      val points = if (kmNumber <= 10) 2.0 else 1.0
       val event = DrivingEvent(
         id = "smooth_km-$kmNumber",
         type = EVENT_SMOOTH_KM,
@@ -1002,7 +1002,11 @@ fun scoreExposureScale(distanceM: Double, durationMs: Double, config: DetectorCo
 
 fun eventScorePoints(event: DrivingEvent, config: DetectorConfig, distanceM: Double): Double {
   return when (event.type) {
-    EVENT_SMOOTH_KM -> if (event.peak >= 2.5) 3.0 else 2.0
+    EVENT_SMOOTH_KM -> when {
+      event.peak >= 2.5 -> 3.0
+      event.peak >= 1.5 -> 2.0
+      else -> 1.0
+    }
     EVENT_SMOOTH_ACCEL, EVENT_SMOOTH_BRAKE -> if (event.peak < SMOOTH_FLOOR_MPS2) 1.0 else 2.0
     EVENT_SMOOTH_CORNER -> 2.0
     EVENT_HARSH_ACCEL -> harshBandPoints(event.level, -5.0, -8.0, -12.0)

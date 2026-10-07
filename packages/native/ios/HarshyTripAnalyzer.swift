@@ -806,7 +806,7 @@ public final class HarshyTripAnalyzer {
         continue
       }
       let kmNumber = index + 1
-      let points = kmNumber <= 10 ? 3.0 : 2.0
+      let points = kmNumber <= 10 ? 2.0 : 1.0
       let event = HarshyDrivingEvent(
         id: "smooth_km-\(kmNumber)",
         type: harshyEventSmoothKm,
@@ -1061,7 +1061,9 @@ public func harshyEventScorePoints(
 ) -> Double {
   switch event.type {
   case harshyEventSmoothKm:
-    return event.peak >= 2.5 ? 3 : 2
+    if event.peak >= 2.5 { return 3 }
+    if event.peak >= 1.5 { return 2 }
+    return 1
   case harshyEventSmoothAccel, harshyEventSmoothBrake:
     return event.peak < harshySmoothFloorMps2 ? 1 : 2
   case harshyEventSmoothCorner:

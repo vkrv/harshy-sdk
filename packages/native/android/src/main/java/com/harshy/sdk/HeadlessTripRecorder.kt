@@ -56,8 +56,12 @@ class HeadlessTripRecorder(
   private var handler: Handler? = null
   private var analyzer: TripAnalyzer? = null
 
+  /** Set by [stop]; refuses new work. Work already queued still runs until [shutdown]. */
   @Volatile
   private var stopped = false
+
+  /** Set by [shutdown] on the recorder thread; after it nothing reaches the analyzer or listener. */
+  private var finished = false
 
   private var accel: FloatArray? = null
   private var linearAccel: FloatArray? = null
@@ -157,6 +161,10 @@ class HeadlessTripRecorder(
   }
 
   private fun shutdown() {
+    if (finished) {
+      return
+    }
+    finished = true
     handler?.removeCallbacks(tick)
     sensorManager.unregisterListener(sensorListener)
     val current = analyzer
@@ -172,7 +180,7 @@ class HeadlessTripRecorder(
   }
 
   private inline fun guarded(block: () -> Unit) {
-    if (stopped) {
+    if (finished) {
       return
     }
     try {

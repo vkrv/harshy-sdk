@@ -211,7 +211,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       }
 
       sessionId = UUID.randomUUID().toString()
-      startedAtMs = clock.nowMs()
+      // HarshyClient passes the stamp its analyzer starts with, so both agree exactly.
+      startedAtMs = (options["startedAtMs"] as? Number)?.toLong() ?: clock.nowMs()
       synchronized(locationLock) { locationSamples.clear() }
       synchronized(imuLock) { imuSamples.clear() }
       imuBatch.clear()

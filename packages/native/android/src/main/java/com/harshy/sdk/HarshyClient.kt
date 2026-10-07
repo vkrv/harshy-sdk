@@ -226,6 +226,7 @@ class HarshyClient @JvmOverloads constructor(
           "locationIntervalMs" to native.locationIntervalMs,
           "background" to native.background,
           "trigger" to trigger,
+          "startedAtMs" to startedAtMs.toLong(),
         ),
       )
     } catch (error: Exception) {
@@ -368,7 +369,7 @@ class HarshyClient @JvmOverloads constructor(
     val startedAtMs = snap["startedAtMs"].asDouble() ?: engine.clock.nowMs().toDouble()
     val merged = mergeDetectorConfig(detector ?: detectorConfig)
     val trigger = parseTripTrigger(snap["trigger"] as? String)
-    val next = TripAnalyzer(merged, id, startedAtMs, device, trigger)
+    val next = TripAnalyzer(merged, id, startedAtMs, device, trigger, captureFromSnapshot(snap["capture"]))
     var lastMetrics: LiveMetrics? = null
     for (sample in parsedLocation) {
       lastMetrics = next.pushLocation(sample).metrics
@@ -475,4 +476,14 @@ class HarshyClient @JvmOverloads constructor(
     const val REQUEST_FOREGROUND = 0x4859
     const val REQUEST_BACKGROUND = 0x485A
   }
+}
+
+/** Capture options from an engine snapshot, so an attached analyzer sizes its IMU ring at the real rate. */
+internal fun captureFromSnapshot(raw: Any?): NativeStartOptions? {
+  @Suppress("UNCHECKED_CAST")
+  val map = raw as? Map<String, Any?> ?: return null
+  return parseNativeStartOptions(map).copy(
+    background = map["background"] as? Boolean ?: true,
+    trigger = map["trigger"] as? String,
+  )
 }

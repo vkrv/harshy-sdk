@@ -502,6 +502,37 @@ describe("detector", () => {
     expect(analyzer.getMetrics().score).toBe(100);
   });
 
+  it("credits a very gradual accel after a longer hold and a real speed change", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "creep-accel",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    for (let step = 0; step <= 8; step += 1) {
+      analyzer.pushLocation(loc(step * 1000, 8 + step * 0.3));
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "smooth_accel")).toBe(false);
+    analyzer.pushLocation(loc(9000, 8 + 9 * 0.3));
+    const credits = analyzer.getEvents().filter((event) => event.type === "smooth_accel");
+    expect(credits).toHaveLength(1);
+    expect(credits[0]?.peak).toBeGreaterThanOrEqual(0.2);
+    expect(credits[0]?.peak).toBeLessThan(0.5);
+    expect(analyzer.getMetrics().points).toBe(1);
+  });
+
+  it("does not credit accel in the gap between gentle and harsh", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "gap-accel",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    for (let step = 0; step <= 8; step += 1) {
+      analyzer.pushLocation(loc(step * 1000, 10 + step * 2));
+    }
+    expect(analyzer.getEvents().some((event) => event.type === "smooth_accel")).toBe(false);
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_accel")).toBe(false);
+  });
+
   it("does not credit a smooth corner when GPS path wiggles on a straight road", () => {
     const analyzer = createTripAnalyzer(undefined, {
       sessionId: "straight-wiggle",

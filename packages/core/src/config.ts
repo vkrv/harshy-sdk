@@ -84,6 +84,21 @@ export const SCORE_EXPOSURE_MAX = 1.6;
 /** Gentle accel, brake, or corner must be at least this strong (m/s²). */
 export const SMOOTH_FLOOR_MPS2 = 0.5;
 
+/**
+ * Very gradual accel or brake (below the modest floor) still counts when it
+ * holds longer and the speed actually changes. GPS noise stays under this.
+ */
+export const SMOOTH_CREEP_FLOOR_MPS2 = 0.2;
+
+/** Modest band stays 3 s. A creep credit needs this long. */
+export const SMOOTH_CREEP_HOLD_MS = 8000;
+
+/** And this much travel, so a parked speed wobble cannot pay. */
+export const SMOOTH_CREEP_HOLD_MIN_M = 40;
+
+/** Net speed change required during a creep hold (m/s). */
+export const SMOOTH_CREEP_MIN_SPEED_DELTA_MPS = 2;
+
 /** And no more than this fraction of that axis's harsh threshold. */
 export const SMOOTH_CEILING_X = 0.6;
 

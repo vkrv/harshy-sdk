@@ -581,6 +581,7 @@ public final class HarshyTripAnalyzer {
     var peak: Double
     var sign: Int?
     var headingAtStartDeg: Double?
+    var speedAtStartMps: Double? = nil
   }
 
   /// Path-only harsh corners need same-sign lateral held with a real heading change.
@@ -666,7 +667,8 @@ public final class HarshyTripAnalyzer {
       harsh = config.harshCornerMps2
     }
     let ceiling = harsh * harshySmoothCeilingX
-    if ceiling < harshySmoothFloorMps2 || magnitude < harshySmoothFloorMps2 || magnitude > ceiling {
+    let floor = type == harshyEventSmoothCorner ? harshySmoothFloorMps2 : harshySmoothCreepFloorMps2
+    if ceiling < floor || magnitude < floor || magnitude > ceiling {
       return nil
     }
     return magnitude
@@ -744,7 +746,8 @@ public final class HarshyTripAnalyzer {
           sinceDistanceM: distanceM,
           peak: magnitude,
           sign: nil,
-          headingAtStartDeg: nil
+          headingAtStartDeg: nil,
+          speedAtStartMps: speed
         )
         continue
       }
@@ -752,7 +755,20 @@ public final class HarshyTripAnalyzer {
       smoothHold[type] = hold
       let heldMs = t - hold.sinceT
       let movedM = distanceM - hold.sinceDistanceM
-      if heldMs < harshySmoothHoldMs || movedM < harshySmoothHoldMinM {
+      let creep = hold.peak < harshySmoothFloorMps2
+      if creep {
+        let delta: Double
+        if let speed, let start = hold.speedAtStartMps {
+          delta = abs(speed - start)
+        } else {
+          delta = 0
+        }
+        if heldMs < harshySmoothCreepHoldMs ||
+          movedM < harshySmoothCreepHoldMinM ||
+          delta < harshySmoothCreepMinSpeedDeltaMps {
+          continue
+        }
+      } else if heldMs < harshySmoothHoldMs || movedM < harshySmoothHoldMinM {
         continue
       }
       if let lastCreditM = smoothCreditAtM[type], distanceM - lastCreditM < harshySmoothGapM {
@@ -1046,7 +1062,9 @@ public func harshyEventScorePoints(
   switch event.type {
   case harshyEventSmoothKm:
     return event.peak >= 2.5 ? 3 : 2
-  case harshyEventSmoothAccel, harshyEventSmoothBrake, harshyEventSmoothCorner:
+  case harshyEventSmoothAccel, harshyEventSmoothBrake:
+    return event.peak < harshySmoothFloorMps2 ? 1 : 2
+  case harshyEventSmoothCorner:
     return 2
   case harshyEventHarshAccel:
     return harshyBandPoints(event.level, light: -5, medium: -8, heavy: -12)

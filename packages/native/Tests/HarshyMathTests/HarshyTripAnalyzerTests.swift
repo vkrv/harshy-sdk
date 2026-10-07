@@ -493,6 +493,25 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertEqual(session.metrics.score, 100, accuracy: 0.001)
   }
 
+  func testRecordsGradualAccelAfterLongHold() {
+    let analyzer = harshyCreateTripAnalyzer(
+      config: nil,
+      sessionId: "creep",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    for step in 0...8 {
+      _ = analyzer.pushLocation(loc(Double(step) * 1000, speedMps: 8 + Double(step) * 0.3))
+    }
+    XCTAssertEqual(analyzer.getEvents().filter { $0.type == harshyEventSmoothAccel }.count, 0)
+    _ = analyzer.pushLocation(loc(9000, speedMps: 8 + 9 * 0.3))
+    let credits = analyzer.getEvents().filter { $0.type == harshyEventSmoothAccel }
+    XCTAssertEqual(credits.count, 1)
+    XCTAssertGreaterThanOrEqual(credits[0].peak, 0.2)
+    XCTAssertLessThan(credits[0].peak, 0.5)
+    XCTAssertEqual(analyzer.getMetrics().points, 1, accuracy: 0.001)
+  }
+
   func testDoesNotScorePathOnlyZigZagGpsAsHarshCornersAtTripStart() {
     let analyzer = harshyCreateTripAnalyzer(
       config: nil,

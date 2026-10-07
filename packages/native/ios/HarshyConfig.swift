@@ -1,7 +1,7 @@
 import Foundation
 
 /** Monotonic SDK stamp on SessionExport. Bump with every intentional SDK change. */
-public let harshySdkVersion = 4
+public let harshySdkVersion = 5
 
 public let harshyScorePenaltyX = 1.0 / 2.0
 public let harshyScoreMax = 100.0
@@ -32,6 +32,10 @@ public func harshyRelativeScore(
 public let harshyScoreExposureMin = 0.6
 public let harshyScoreExposureMax = 1.6
 public let harshySmoothFloorMps2 = 0.5
+public let harshySmoothCreepFloorMps2 = 0.2
+public let harshySmoothCreepHoldMs = 8000.0
+public let harshySmoothCreepHoldMinM = 40.0
+public let harshySmoothCreepMinSpeedDeltaMps = 2.0
 public let harshySmoothCeilingX = 0.6
 public let harshySmoothHoldMs = 3000.0
 public let harshySmoothHoldMinM = 15.0

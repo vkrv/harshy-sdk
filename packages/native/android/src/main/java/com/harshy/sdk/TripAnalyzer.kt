@@ -595,6 +595,7 @@ class TripAnalyzer(
     var peak: Double,
     var sign: Int? = null,
     var headingAtStartDeg: Double? = null,
+    var speedAtStartMps: Double? = null,
   )
 
   /**
@@ -673,7 +674,8 @@ class TripAnalyzer(
       }
     }
     val ceiling = harsh * SMOOTH_CEILING_X
-    if (ceiling < SMOOTH_FLOOR_MPS2 || magnitude < SMOOTH_FLOOR_MPS2 || magnitude > ceiling) {
+    val floor = if (type == EVENT_SMOOTH_CORNER) SMOOTH_FLOOR_MPS2 else SMOOTH_CREEP_FLOOR_MPS2
+    if (ceiling < floor || magnitude < floor || magnitude > ceiling) {
       return null
     }
     return magnitude
@@ -742,13 +744,28 @@ class TripAnalyzer(
       }
       val hold = smoothHold[type]
       if (hold == null) {
-        smoothHold[type] = SmoothHold(t, distanceM, magnitude)
+        smoothHold[type] = SmoothHold(t, distanceM, magnitude, speedAtStartMps = speed)
         continue
       }
       hold.peak = max(hold.peak, magnitude)
       val heldMs = t - hold.sinceT
       val movedM = distanceM - hold.sinceDistanceM
-      if (heldMs < SMOOTH_HOLD_MS || movedM < SMOOTH_HOLD_MIN_M) {
+      val creep = hold.peak < SMOOTH_FLOOR_MPS2
+      if (creep) {
+        val startSpeed = hold.speedAtStartMps
+        val delta = if (speed != null && startSpeed != null) {
+          abs(speed - startSpeed)
+        } else {
+          0.0
+        }
+        if (
+          heldMs < SMOOTH_CREEP_HOLD_MS ||
+          movedM < SMOOTH_CREEP_HOLD_MIN_M ||
+          delta < SMOOTH_CREEP_MIN_SPEED_DELTA_MPS
+        ) {
+          continue
+        }
+      } else if (heldMs < SMOOTH_HOLD_MS || movedM < SMOOTH_HOLD_MIN_M) {
         continue
       }
       val lastCreditM = smoothCreditAtM[type]
@@ -986,7 +1003,8 @@ fun scoreExposureScale(distanceM: Double, durationMs: Double, config: DetectorCo
 fun eventScorePoints(event: DrivingEvent, config: DetectorConfig, distanceM: Double): Double {
   return when (event.type) {
     EVENT_SMOOTH_KM -> if (event.peak >= 2.5) 3.0 else 2.0
-    EVENT_SMOOTH_ACCEL, EVENT_SMOOTH_BRAKE, EVENT_SMOOTH_CORNER -> 2.0
+    EVENT_SMOOTH_ACCEL, EVENT_SMOOTH_BRAKE -> if (event.peak < SMOOTH_FLOOR_MPS2) 1.0 else 2.0
+    EVENT_SMOOTH_CORNER -> 2.0
     EVENT_HARSH_ACCEL -> harshBandPoints(event.level, -5.0, -8.0, -12.0)
     EVENT_HARSH_BRAKE -> harshBandPoints(event.level, -8.0, -12.0, -16.0)
     EVENT_HARSH_CORNER -> harshBandPoints(event.level, -4.0, -8.0, -12.0)

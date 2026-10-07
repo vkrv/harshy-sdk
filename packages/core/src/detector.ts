@@ -11,6 +11,10 @@ import {
   SCORE_MAX,
   SMOOTH_CEILING_X,
   SMOOTH_CORNER_MIN_TURN_DEG,
+  SMOOTH_CREEP_FLOOR_MPS2,
+  SMOOTH_CREEP_HOLD_MIN_M,
+  SMOOTH_CREEP_HOLD_MS,
+  SMOOTH_CREEP_MIN_SPEED_DELTA_MPS,
   SMOOTH_FLOOR_MPS2,
   SMOOTH_GAP_M,
   SMOOTH_HOLD_MIN_M,
@@ -103,8 +107,8 @@ type SmoothHold = {
   peak: number;
   /** Lateral sign for `smooth_corner` (+1 / −1). Accel/brake omit. */
   sign?: number;
-  /** Track heading when a corner hold began. */
-  headingAtStartDeg?: number;
+  /** Speed when an accel/brake hold began. Creep credits need a real change. */
+  speedAtStartMps?: number;
 };
 
 export function isSmoothDrivingEvent(
@@ -748,7 +752,8 @@ function smoothMagnitude(
     harsh = config.harshCornerMps2;
   }
   const ceiling = harsh * SMOOTH_CEILING_X;
-  if (ceiling < SMOOTH_FLOOR_MPS2 || magnitude < SMOOTH_FLOOR_MPS2 || magnitude > ceiling) {
+  const floor = type === "smooth_corner" ? SMOOTH_FLOOR_MPS2 : SMOOTH_CREEP_FLOOR_MPS2;
+  if (ceiling < floor || magnitude < floor || magnitude > ceiling) {
     return null;
   }
   return magnitude;
@@ -918,13 +923,31 @@ function updateSmoothCredits(
 
     const hold = state.smoothHold[type];
     if (!hold) {
-      state.smoothHold[type] = { sinceT: t, sinceDistanceM: state.distanceM, peak: magnitude };
+      state.smoothHold[type] = {
+        sinceT: t,
+        sinceDistanceM: state.distanceM,
+        peak: magnitude,
+        speedAtStartMps: speed ?? undefined,
+      };
       continue;
     }
     hold.peak = Math.max(hold.peak, magnitude);
     const heldMs = t - hold.sinceT;
     const movedM = state.distanceM - hold.sinceDistanceM;
-    if (heldMs < SMOOTH_HOLD_MS || movedM < SMOOTH_HOLD_MIN_M) {
+    const creep = hold.peak < SMOOTH_FLOOR_MPS2;
+    if (creep) {
+      const delta =
+        speed != null && hold.speedAtStartMps != null
+          ? Math.abs(speed - hold.speedAtStartMps)
+          : 0;
+      if (
+        heldMs < SMOOTH_CREEP_HOLD_MS ||
+        movedM < SMOOTH_CREEP_HOLD_MIN_M ||
+        delta < SMOOTH_CREEP_MIN_SPEED_DELTA_MPS
+      ) {
+        continue;
+      }
+    } else if (heldMs < SMOOTH_HOLD_MS || movedM < SMOOTH_HOLD_MIN_M) {
       continue;
     }
     const lastCreditM = state.smoothCreditAtM[type];
@@ -1232,6 +1255,7 @@ export function eventScorePoints(
       return (event.peak ?? 3) >= 2.5 ? 3 : 2;
     case "smooth_accel":
     case "smooth_brake":
+      return (event.peak ?? SMOOTH_FLOOR_MPS2) < SMOOTH_FLOOR_MPS2 ? 1 : 2;
     case "smooth_corner":
       return 2;
     case "harsh_accel":

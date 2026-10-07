@@ -494,6 +494,25 @@ class TripAnalyzerTest {
   }
 
   @Test
+  fun recordsGradualAccelAfterLongHold() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig.DEFAULT,
+      "creep",
+      0.0,
+      DeviceInfo("android", "test"),
+    )
+    for (step in 0..8) {
+      analyzer.pushLocation(loc(step * 1000.0, 8.0 + step * 0.3))
+    }
+    assertEquals(0, analyzer.getEvents().count { it.type == EVENT_SMOOTH_ACCEL })
+    analyzer.pushLocation(loc(9000.0, 8.0 + 9 * 0.3))
+    val credits = analyzer.getEvents().filter { it.type == EVENT_SMOOTH_ACCEL }
+    assertEquals(1, credits.size)
+    assertTrue(credits[0].peak >= 0.2 && credits[0].peak < 0.5)
+    assertEquals(1.0, analyzer.getMetrics().points, 0.001)
+  }
+
+  @Test
   fun doesNotScorePathOnlyZigZagGpsAsHarshCornersAtTripStart() {
     val analyzer = TripAnalyzer(
       DetectorConfig.DEFAULT,

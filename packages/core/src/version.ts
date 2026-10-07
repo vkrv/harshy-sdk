@@ -5,4 +5,4 @@
  * `schemaVersion` (that stays 1 for additive JSON). Older files omit
  * `sdkVersion` — treat as unknown.
  */
-export const HARSHY_SDK_VERSION = 4;
+export const HARSHY_SDK_VERSION = 5;

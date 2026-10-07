@@ -16,10 +16,18 @@ class TripAnalyzer(
   val device: DeviceInfo,
   val trigger: String = "manual",
   val capture: NativeStartOptions? = null,
+  /** IMU Hz for the default ring cap. Falls back to [capture], then 50. Matches `@harshy/core`. */
+  imuHz: Int? = null,
+  /**
+   * Override for the IMU ring size. Detection only looks back seconds, so hosts that do not export
+   * raw IMU can keep a short window. Default: [MAX_IMU_MINUTES] at the IMU Hz.
+   */
+  maxImuSamples: Int? = null,
 ) {
   private var config: DetectorConfig = mergeDetectorConfig(configInput)
-  private val location = mutableListOf<LocationSample>()
-  private val imu = mutableListOf<ImuSample>()
+  private val imuCap: Int = maxImuSamples ?: com.harshy.sdk.maxImuSamples(imuHz ?: capture?.imuHz ?: DEFAULT_ANALYZER_IMU_HZ)
+  private val location = ArrayDeque<LocationSample>()
+  private val imu = ArrayDeque<ImuSample>()
   private val events = mutableListOf<DrivingEvent>()
   private val lastEventAt = mutableMapOf<String, Double>()
   private val lastEventLevel = mutableMapOf<String, String>()
@@ -113,8 +121,16 @@ class TripAnalyzer(
     val stored = sample.copy(
       speedMps = derivedSpeedMps(lastGoodLocation, sample) ?: sample.speedMps,
       courseDeg = sample.courseDeg,
+      roadRmsMps2 = sample.roadRmsMps2 ?: roadRmsForLocation(
+        sample,
+        imu,
+        startedAtMs = startedAtMs,
+        jerkSettleMs = config.jerkSettleMs,
+        minSpeedMps = config.minSpeedMps,
+      ),
     )
     location.add(stored)
+    trimRingBuffer(location, MAX_LOCATION_SAMPLES)
     if (locationUsable(stored, config)) {
       val previous = lastGoodLocation
       if (previous != null) {
@@ -168,6 +184,7 @@ class TripAnalyzer(
 
   fun pushImu(sample: ImuSample): AnalyzerPush {
     imu.add(sample)
+    trimRingBuffer(imu, imuCap)
     lastImu = sample
     val impact = ingestImpactImu(sample)
     val handheldEvents = ingestHandheldImu(sample)
@@ -1096,8 +1113,10 @@ fun createTripAnalyzer(
   device: DeviceInfo,
   trigger: String = "manual",
   capture: NativeStartOptions? = null,
+  imuHz: Int? = null,
+  maxImuSamples: Int? = null,
 ): TripAnalyzer {
-  return TripAnalyzer(config, sessionId, startedAtMs, device, trigger, capture)
+  return TripAnalyzer(config, sessionId, startedAtMs, device, trigger, capture, imuHz, maxImuSamples)
 }
 
 @Suppress("UNUSED_PARAMETER")

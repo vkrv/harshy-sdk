@@ -37,4 +37,11 @@ describe("formatTripLiveDisplay", () => {
       distance: "3.20 km",
     });
   });
+
+  it("includes the signed limit when speed is over it", () => {
+    expect(
+      formatTripLiveDisplay({ ...base, speedKmh: 57, speedMps: 57 / 3.6, speedLimitMps: 50 / 3.6 }, "Apexmatic")
+        .speed,
+    ).toBe("57 · 50");
+  });
 });

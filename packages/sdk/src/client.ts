@@ -122,6 +122,14 @@ export type CreateHarshyDeps = {
   /** Override metric formatting (e.g. imperial units in Apexmatic). */
   formatLiveDisplay?: (metrics: LiveMetrics, title: string) => TripLiveDisplayPayload;
   /**
+   * Synchronous mapped-limit lookup. A miss returns null and may download in the background.
+   * `beginTrip` clears a tile that has used up its retries.
+   */
+  speedLimitLookup?: {
+    lookup: (sample: LocationSample) => number | null;
+    beginTrip?: () => void;
+  };
+  /**
    * Host device stamped on sessions when `start` / `recover` / native Auto attach
    * omit `device`. Without this, native Auto trips fall back to `platform: "unknown"`.
    */
@@ -433,21 +441,22 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
     unsubscribeEngine?.();
     unsubscribeEngine = engine.subscribe({
       onLocation: (sample) => {
+        const stamped = analyzer ? withSpeedLimit(sample) : sample;
         for (const listener of listeners) {
-          listener.onLocation?.(sample);
+          listener.onLocation?.(stamped);
         }
         if (!analyzer) {
           return;
         }
         const gated = advanceIdleMotion(
           idleMotion,
-          sample,
+          stamped,
           detectorConfig.minSpeedMps,
         );
         idleMotion = gated.state;
-        lastRaw?.location.push(sample);
+        lastRaw?.location.push(stamped);
         trimLastRaw();
-        const result = analyzer.pushLocation(sample);
+        const result = analyzer.pushLocation(stamped);
         if (!result) {
           return;
         }
@@ -512,6 +521,15 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       () => undefined,
     );
     return next;
+  };
+
+  const withSpeedLimit = (sample: LocationSample): LocationSample => {
+    const looked = deps.speedLimitLookup?.lookup(sample);
+    const limit = looked != null && looked > 0 ? looked : sample.speedLimitMps;
+    if (limit == null || !(limit > 0) || sample.speedLimitMps === limit) {
+      return sample;
+    }
+    return { ...sample, speedLimitMps: limit };
   };
 
   const persistSession = async (session: SessionExport): Promise<void> => {
@@ -579,7 +597,10 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
     let lastMetrics: LiveMetrics | null = null;
     let shouldAutoStop = false;
     let autoStopDiscard = false;
-    for (const sample of lastRaw.location) {
+    deps.speedLimitLookup?.beginTrip?.();
+    for (let index = 0; index < lastRaw.location.length; index += 1) {
+      const sample = withSpeedLimit(lastRaw.location[index]!);
+      lastRaw.location[index] = sample;
       const gated = advanceIdleMotion(
         idleMotion,
         sample,
@@ -651,6 +672,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       if (running) {
         await client.stop();
       }
+      deps.speedLimitLookup?.beginTrip?.();
       const wasPreviewing = previewing;
       previewing = false;
       tripTrigger = options?.trigger ?? "manual";
@@ -875,10 +897,11 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
         const lastT = priorRaw.location.at(-1)?.t ?? Number.NEGATIVE_INFINITY;
         for (const sample of raw.location) {
           if (sample.t > lastT) {
+            const stamped = withSpeedLimit(sample);
             if (!cutIdleTail) {
-              liveAnalyzer.pushLocation(sample);
+              liveAnalyzer.pushLocation(stamped);
             }
-            priorRaw.location.push(sample);
+            priorRaw.location.push(stamped);
           }
         }
         trimLastRaw();

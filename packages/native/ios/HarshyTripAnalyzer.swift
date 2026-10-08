@@ -1,5 +1,9 @@
 import Foundation
 
+private let roadSpeedHoldMs = 2_000.0
+private let roadSpeedMarginMps = 1.0 / 3.6
+private let roadLimitChangeMps = 0.3
+
 public struct HarshyAnalyzerPush {
   public var metrics: HarshyLiveMetrics
   public var newEvents: [HarshyDrivingEvent]
@@ -19,6 +23,11 @@ public final class HarshyTripAnalyzer {
   private var lastEventAt: [String: Double] = [:]
   private var lastEventLevel: [String: String] = [:]
   private var openSpeeding: HarshyDrivingEvent?
+  private var speedingHoldSinceT: Double?
+  private var speedingHoldPeak = 0.0
+  private var speedingHoldLat: Double?
+  private var speedingHoldLon: Double?
+  private var speedingHoldCap: Double?
   private var openHandheld: HarshyDrivingEvent?
   private var handheld = harshyEmptyHandheldFilter()
   private var distanceM = 0.0
@@ -380,6 +389,19 @@ public final class HarshyTripAnalyzer {
 
   private func currentSpeed() -> Double? { lastGoodLocation?.speedMps }
 
+  private func clearSpeedingHold() {
+    speedingHoldSinceT = nil
+    speedingHoldPeak = 0
+    speedingHoldLat = nil
+    speedingHoldLon = nil
+    speedingHoldCap = nil
+  }
+
+  private func limitsDiffer(_ left: Double?, _ right: Double) -> Bool {
+    guard let left else { return false }
+    return abs(left - right) >= roadLimitChangeMps
+  }
+
   @discardableResult
   private func closeSpeedingSpan(_ t: Double) -> HarshyDrivingEvent? {
     guard let open = openSpeeding, open.endT == nil else { return nil }
@@ -389,39 +411,49 @@ public final class HarshyTripAnalyzer {
     return open
   }
 
-  private func updateSpeedingSpan(
+  private func openSpeedingEvent(
+    t: Double,
+    speed: Double,
+    cap: Double,
+    loc: HarshyLocationSample?,
+    lat: Double?,
+    lon: Double?
+  ) -> HarshyDrivingEvent {
+    let level = harshyEventLevel(peak: speed, threshold: cap, mediumX: config.harshMediumX, heavyX: config.harshHeavyX)
+    let event = HarshyDrivingEvent(
+      id: "speeding-\(t)",
+      type: harshyEventSpeeding,
+      t: t,
+      peak: speed,
+      severity: harshySeverityFromPeak(peak: speed, threshold: cap),
+      level: level,
+      lat: lat ?? loc?.lat,
+      lon: lon ?? loc?.lon,
+      speedMps: speed,
+      speedLimitMps: cap
+    )
+    events.append(event)
+    openSpeeding = event
+    harshyTagCompoundOverlaps(events: events, incoming: event, now: t, windowMs: config.compoundWindowMs)
+    return event
+  }
+
+  private func updateSettingsSpeeding(
     t: Double,
     speed: Double?,
+    cap: Double,
     loc: HarshyLocationSample?,
     moving: Bool
   ) -> HarshyDrivingEvent? {
-    guard let cap = config.speedingMps else {
-      return closeSpeedingSpan(t)
-    }
     let over = moving && speed != nil && speed! >= cap
     if over, let speed {
-      let level = harshyEventLevel(peak: speed, threshold: cap, mediumX: config.harshMediumX, heavyX: config.harshHeavyX)
       if openSpeeding == nil {
-        let event = HarshyDrivingEvent(
-          id: "speeding-\(t)",
-          type: harshyEventSpeeding,
-          t: t,
-          peak: speed,
-          severity: harshySeverityFromPeak(peak: speed, threshold: cap),
-          level: level,
-          lat: loc?.lat,
-          lon: loc?.lon,
-          speedMps: speed
-        )
-        events.append(event)
-        openSpeeding = event
-        harshyTagCompoundOverlaps(events: events, incoming: event, now: t, windowMs: config.compoundWindowMs)
-        return event
+        return openSpeedingEvent(t: t, speed: speed, cap: cap, loc: loc, lat: loc?.lat, lon: loc?.lon)
       }
       if let open = openSpeeding, speed > open.peak {
         open.peak = speed
         open.severity = harshySeverityFromPeak(peak: speed, threshold: cap)
-        open.level = level
+        open.level = harshyEventLevel(peak: speed, threshold: cap, mediumX: config.harshMediumX, heavyX: config.harshHeavyX)
         open.lat = loc?.lat ?? open.lat
         open.lon = loc?.lon ?? open.lon
         open.speedMps = speed
@@ -430,6 +462,81 @@ public final class HarshyTripAnalyzer {
       }
       return nil
     }
+    let exit = cap * config.speedingExitX
+    if openSpeeding != nil && (speed == nil || speed! < exit || !moving) {
+      return closeSpeedingSpan(t)
+    }
+    return nil
+  }
+
+  private func updateSpeedingSpan(
+    t: Double,
+    speed: Double?,
+    loc: HarshyLocationSample?,
+    moving: Bool
+  ) -> HarshyDrivingEvent? {
+    let roadLimit = loc?.speedLimitMps
+    let road = roadLimit != nil && roadLimit! > 0
+    let cap = road ? roadLimit : config.speedingMps
+    guard let cap, cap > 0 else {
+      clearSpeedingHold()
+      return closeSpeedingSpan(t)
+    }
+    let limitChanged = limitsDiffer(openSpeeding?.speedLimitMps, cap)
+    if !road {
+      clearSpeedingHold()
+      if limitChanged {
+        _ = closeSpeedingSpan(t)
+      }
+      return updateSettingsSpeeding(t: t, speed: speed, cap: cap, loc: loc, moving: moving)
+    }
+    if limitChanged {
+      _ = closeSpeedingSpan(t)
+      clearSpeedingHold()
+    }
+    let over = moving && speed != nil && speed! > cap + roadSpeedMarginMps
+    if over, let speed {
+      if let open = openSpeeding {
+        clearSpeedingHold()
+        if speed > open.peak {
+          open.peak = speed
+          open.severity = harshySeverityFromPeak(peak: speed, threshold: cap)
+          open.level = harshyEventLevel(peak: speed, threshold: cap, mediumX: config.harshMediumX, heavyX: config.harshHeavyX)
+          open.lat = loc?.lat ?? open.lat
+          open.lon = loc?.lon ?? open.lon
+          open.speedMps = speed
+          harshyTagCompoundOverlaps(events: events, incoming: open, now: t, windowMs: config.compoundWindowMs)
+          return open
+        }
+        return nil
+      }
+      let sameHold = speedingHoldSinceT != nil && speedingHoldCap != nil && !limitsDiffer(speedingHoldCap, cap)
+      if !sameHold {
+        speedingHoldSinceT = t
+        speedingHoldCap = cap
+        speedingHoldPeak = speed
+        speedingHoldLat = loc?.lat
+        speedingHoldLon = loc?.lon
+      } else if speed > speedingHoldPeak {
+        speedingHoldPeak = speed
+        speedingHoldLat = loc?.lat ?? speedingHoldLat
+        speedingHoldLon = loc?.lon ?? speedingHoldLon
+      }
+      if let since = speedingHoldSinceT, t - since >= roadSpeedHoldMs {
+        let opened = openSpeedingEvent(
+          t: since,
+          speed: speedingHoldPeak,
+          cap: cap,
+          loc: loc,
+          lat: speedingHoldLat,
+          lon: speedingHoldLon
+        )
+        clearSpeedingHold()
+        return opened
+      }
+      return nil
+    }
+    clearSpeedingHold()
     let exit = cap * config.speedingExitX
     if openSpeeding != nil && (speed == nil || speed! < exit || !moving) {
       return closeSpeedingSpan(t)

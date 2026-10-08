@@ -26,6 +26,7 @@ export const locationSampleSchema = z.object({
   accuracyM: z.number().nullable(),
   altitudeAccuracyM: z.number().nullable().optional().default(null),
   roadRmsMps2: z.number().nonnegative().nullable().optional(),
+  speedLimitMps: z.number().positive().nullable().optional(),
 });
 
 export const imuSampleSchema = z.object({
@@ -69,6 +70,7 @@ export const drivingEventSchema = z.object({
   lat: z.number().nullable(),
   lon: z.number().nullable(),
   speedMps: z.number().nullable(),
+  speedLimitMps: z.number().positive().nullable().optional(),
   overlaps: z.array(drivingEventTypeSchema).default([]),
   impactDirection: impactDirectionSchema.optional(),
 });

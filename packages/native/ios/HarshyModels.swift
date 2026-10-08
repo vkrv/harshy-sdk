@@ -34,6 +34,7 @@ public struct HarshyLocationSample: Equatable, Sendable {
   public var accuracyM: Double?
   public var altitudeAccuracyM: Double?
   public var roadRmsMps2: Double?
+  public var speedLimitMps: Double?
 
   public init(
     t: Double,
@@ -44,7 +45,8 @@ public struct HarshyLocationSample: Equatable, Sendable {
     courseDeg: Double? = nil,
     accuracyM: Double? = nil,
     altitudeAccuracyM: Double? = nil,
-    roadRmsMps2: Double? = nil
+    roadRmsMps2: Double? = nil,
+    speedLimitMps: Double? = nil
   ) {
     self.t = t
     self.lat = lat
@@ -55,6 +57,7 @@ public struct HarshyLocationSample: Equatable, Sendable {
     self.accuracyM = accuracyM
     self.altitudeAccuracyM = altitudeAccuracyM
     self.roadRmsMps2 = roadRmsMps2
+    self.speedLimitMps = speedLimitMps
   }
 }
 
@@ -189,6 +192,7 @@ public final class HarshyDrivingEvent {
   public var lat: Double?
   public var lon: Double?
   public var speedMps: Double?
+  public var speedLimitMps: Double?
   public var overlaps: [String]
   public var impactDirection: String?
 
@@ -204,7 +208,8 @@ public final class HarshyDrivingEvent {
     lon: Double?,
     speedMps: Double?,
     overlaps: [String] = [],
-    impactDirection: String? = nil
+    impactDirection: String? = nil,
+    speedLimitMps: Double? = nil
   ) {
     self.id = id
     self.type = type
@@ -218,6 +223,7 @@ public final class HarshyDrivingEvent {
     self.speedMps = speedMps
     self.overlaps = overlaps
     self.impactDirection = impactDirection
+    self.speedLimitMps = speedLimitMps
   }
 }
 

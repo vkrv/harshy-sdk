@@ -429,6 +429,36 @@ class TripAnalyzerTest {
   }
 
   @Test
+  fun opensSpeedingSpanWhenMappedLimitIsHeld() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig(harshAccelMps2 = 20.0, harshBrakeMps2 = 20.0, harshCornerMps2 = 20.0),
+      "road-limit",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    val limit = 50.0 / 3.6
+    val speed = 57.0 / 3.6
+    fun sample(t: Double, velocity: Double): LocationSample {
+      return loc(t, velocity).copy(speedLimitMps = limit)
+    }
+    assertTrue(analyzer.pushLocation(sample(0.0, speed)).newEvents.none { it.type == EVENT_SPEEDING })
+    assertTrue(analyzer.pushLocation(sample(1000.0, speed)).newEvents.none { it.type == EVENT_SPEEDING })
+    val opened = analyzer.pushLocation(sample(2000.0, speed)).newEvents.filter { it.type == EVENT_SPEEDING }
+    assertEquals(1, opened.size)
+    assertEquals(0.0, opened[0].t, 0.001)
+    assertEquals(limit, opened[0].speedLimitMps ?: -1.0, 0.001)
+    val closed = analyzer.pushLocation(sample(3000.0, 10.0)).newEvents.filter { it.type == EVENT_SPEEDING }
+    assertEquals(1, closed.size)
+    assertEquals(3000.0, closed[0].endT ?: -1.0, 0.001)
+    val json = analyzer.finalize(3000.0).toJsonObject()
+    val event = json.getJSONArray("events").getJSONObject(0)
+    assertEquals("speeding", event.getString("type"))
+    assertTrue(event.has("speedLimitMps"))
+    val stored = json.getJSONArray("location").getJSONObject(0)
+    assertTrue(stored.has("speedLimitMps"))
+  }
+
+  @Test
   fun sessionJsonIncludesTrigger() {
     val session = analyzeTrip(
       location = listOf(loc(0.0, 5.0)),

@@ -21,6 +21,8 @@ export type LocationSample = {
   altitudeAccuracyM: number | null;
   /** Vertical linear-accel RMS (m/s²) over ~1 s. Omitted on older trips. Not a score input. */
   roadRmsMps2?: number | null;
+  /** Mapped numeric speed limit for this fix (m/s). Omitted when no road matched. */
+  speedLimitMps?: number | null;
 };
 
 export type ImuSample = {
@@ -69,6 +71,8 @@ export type DrivingEvent = {
   lat: number | null;
   lon: number | null;
   speedMps: number | null;
+  /** Cap this speeding span used (mapped limit or the Settings cap). Omitted on other types. */
+  speedLimitMps?: number | null;
   /** Other kinematic types overlapping this event. Empty when none. */
   overlaps: DrivingEventType[];
   /** Set on `possible_impact` when the axis is honest. Absent on older JSON. */
@@ -79,6 +83,8 @@ export type LiveMetrics = {
   t: number;
   speedMps: number | null;
   speedKmh: number | null;
+  /** Limit in force for the live readout: mapped maxspeed, otherwise the Settings cap. */
+  speedLimitMps?: number | null;
   /** Live display heading (held/smoothed). Raw GPS `courseDeg` stays on location samples. */
   headingDeg: number | null;
   altitudeM: number | null;

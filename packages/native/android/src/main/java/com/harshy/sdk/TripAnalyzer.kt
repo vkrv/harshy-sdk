@@ -4,6 +4,10 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
+private const val ROAD_SPEED_HOLD_MS = 2_000.0
+private const val ROAD_SPEED_MARGIN_MPS = 1.0 / 3.6
+private const val ROAD_LIMIT_CHANGE_MPS = 0.3
+
 data class AnalyzerPush(
   val metrics: LiveMetrics,
   val newEvents: List<DrivingEvent>,
@@ -32,6 +36,11 @@ class TripAnalyzer(
   private val lastEventAt = mutableMapOf<String, Double>()
   private val lastEventLevel = mutableMapOf<String, String>()
   private var openSpeeding: DrivingEvent? = null
+  private var speedingHoldSinceT: Double? = null
+  private var speedingHoldPeak = 0.0
+  private var speedingHoldLat: Double? = null
+  private var speedingHoldLon: Double? = null
+  private var speedingHoldCap: Double? = null
   private var openHandheld: DrivingEvent? = null
   private var handheld: HandheldFilter = emptyHandheldFilter()
   private var distanceM = 0.0
@@ -413,6 +422,18 @@ class TripAnalyzer(
 
   private fun currentSpeed(): Double? = lastGoodLocation?.speedMps
 
+  private fun clearSpeedingHold() {
+    speedingHoldSinceT = null
+    speedingHoldPeak = 0.0
+    speedingHoldLat = null
+    speedingHoldLon = null
+    speedingHoldCap = null
+  }
+
+  private fun limitsDiffer(left: Double?, right: Double): Boolean {
+    return left != null && abs(left - right) >= ROAD_LIMIT_CHANGE_MPS
+  }
+
   private fun closeSpeedingSpan(t: Double): DrivingEvent? {
     val open = openSpeeding
     if (open == null || open.endT != null) {
@@ -424,39 +445,51 @@ class TripAnalyzer(
     return open
   }
 
-  private fun updateSpeedingSpan(
+  private fun openSpeedingEvent(
+    t: Double,
+    speed: Double,
+    cap: Double,
+    loc: LocationSample?,
+    lat: Double?,
+    lon: Double?,
+  ): DrivingEvent {
+    val level = harshEventLevel(speed, cap, config.harshMediumX, config.harshHeavyX)
+    val event = DrivingEvent(
+      id = "speeding-$t",
+      type = EVENT_SPEEDING,
+      t = t,
+      endT = null,
+      peak = speed,
+      severity = severityFromPeak(speed, cap),
+      level = level,
+      lat = lat ?: loc?.lat,
+      lon = lon ?: loc?.lon,
+      speedMps = speed,
+      speedLimitMps = cap,
+    )
+    events.add(event)
+    openSpeeding = event
+    tagCompoundOverlaps(events, event, t, config.compoundWindowMs)
+    return event
+  }
+
+  private fun updateSettingsSpeeding(
     t: Double,
     speed: Double?,
+    cap: Double,
     loc: LocationSample?,
     moving: Boolean,
   ): DrivingEvent? {
-    val cap = config.speedingMps ?: return closeSpeedingSpan(t)
     val over = moving && speed != null && speed >= cap
     if (over && speed != null) {
-      val level = harshEventLevel(speed, cap, config.harshMediumX, config.harshHeavyX)
       val existingOpen = openSpeeding
       if (existingOpen == null) {
-        val event = DrivingEvent(
-          id = "speeding-$t",
-          type = EVENT_SPEEDING,
-          t = t,
-          endT = null,
-          peak = speed,
-          severity = severityFromPeak(speed, cap),
-          level = level,
-          lat = loc?.lat,
-          lon = loc?.lon,
-          speedMps = speed,
-        )
-        events.add(event)
-        openSpeeding = event
-        tagCompoundOverlaps(events, event, t, config.compoundWindowMs)
-        return event
+        return openSpeedingEvent(t, speed, cap, loc, loc?.lat, loc?.lon)
       }
       if (speed > existingOpen.peak) {
         existingOpen.peak = speed
         existingOpen.severity = severityFromPeak(speed, cap)
-        existingOpen.level = level
+        existingOpen.level = harshEventLevel(speed, cap, config.harshMediumX, config.harshHeavyX)
         existingOpen.lat = loc?.lat ?: existingOpen.lat
         existingOpen.lon = loc?.lon ?: existingOpen.lon
         existingOpen.speedMps = speed
@@ -465,6 +498,78 @@ class TripAnalyzer(
       }
       return null
     }
+    val exit = cap * config.speedingExitX
+    if (openSpeeding != null && (speed == null || speed < exit || !moving)) {
+      return closeSpeedingSpan(t)
+    }
+    return null
+  }
+
+  private fun updateSpeedingSpan(
+    t: Double,
+    speed: Double?,
+    loc: LocationSample?,
+    moving: Boolean,
+  ): DrivingEvent? {
+    val roadLimit = loc?.speedLimitMps
+    val road = roadLimit != null && roadLimit > 0.0
+    val cap = if (road) roadLimit else config.speedingMps
+    if (cap == null || cap <= 0.0) {
+      clearSpeedingHold()
+      return closeSpeedingSpan(t)
+    }
+    val limitChanged = limitsDiffer(openSpeeding?.speedLimitMps, cap)
+    if (!road) {
+      clearSpeedingHold()
+      if (limitChanged) {
+        closeSpeedingSpan(t)
+      }
+      return updateSettingsSpeeding(t, speed, cap, loc, moving)
+    }
+    if (limitChanged) {
+      closeSpeedingSpan(t)
+      clearSpeedingHold()
+    }
+    val over = moving && speed != null && speed > cap + ROAD_SPEED_MARGIN_MPS
+    if (over && speed != null) {
+      val existingOpen = openSpeeding
+      if (existingOpen != null) {
+        clearSpeedingHold()
+        if (speed > existingOpen.peak) {
+          existingOpen.peak = speed
+          existingOpen.severity = severityFromPeak(speed, cap)
+          existingOpen.level = harshEventLevel(speed, cap, config.harshMediumX, config.harshHeavyX)
+          existingOpen.lat = loc?.lat ?: existingOpen.lat
+          existingOpen.lon = loc?.lon ?: existingOpen.lon
+          existingOpen.speedMps = speed
+          tagCompoundOverlaps(events, existingOpen, t, config.compoundWindowMs)
+          return existingOpen
+        }
+        return null
+      }
+      val holdSince = speedingHoldSinceT
+      val holdCap = speedingHoldCap
+      val sameHold = holdSince != null && holdCap != null && !limitsDiffer(holdCap, cap)
+      if (!sameHold) {
+        speedingHoldSinceT = t
+        speedingHoldCap = cap
+        speedingHoldPeak = speed
+        speedingHoldLat = loc?.lat
+        speedingHoldLon = loc?.lon
+      } else if (speed > speedingHoldPeak) {
+        speedingHoldPeak = speed
+        speedingHoldLat = loc?.lat ?: speedingHoldLat
+        speedingHoldLon = loc?.lon ?: speedingHoldLon
+      }
+      val since = speedingHoldSinceT
+      if (since != null && t - since >= ROAD_SPEED_HOLD_MS) {
+        val opened = openSpeedingEvent(since, speedingHoldPeak, cap, loc, speedingHoldLat, speedingHoldLon)
+        clearSpeedingHold()
+        return opened
+      }
+      return null
+    }
+    clearSpeedingHold()
     val exit = cap * config.speedingExitX
     if (openSpeeding != null && (speed == null || speed < exit || !moving)) {
       return closeSpeedingSpan(t)

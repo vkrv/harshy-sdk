@@ -18,10 +18,18 @@ export function formatTripLiveDisplay(
   metrics: LiveMetrics,
   title: string,
 ): TripLiveDisplayPayload {
+  const limitKmh = metrics.speedLimitMps == null ? null : metrics.speedLimitMps * 3.6;
+  const over =
+    metrics.speedKmh != null &&
+    limitKmh != null &&
+    Number.isFinite(metrics.speedKmh) &&
+    metrics.speedKmh > limitKmh + 1;
   const speed =
     metrics.speedKmh == null || Number.isNaN(metrics.speedKmh)
       ? "—"
-      : `${Math.round(metrics.speedKmh)} km/h`;
+      : over
+        ? `${Math.round(metrics.speedKmh)} · ${Math.round(limitKmh!)}`
+        : `${Math.round(metrics.speedKmh)} km/h`;
   const km = metrics.distanceM / 1000;
   const distance = Number.isFinite(km) ? `${km < 10 ? km.toFixed(2) : km.toFixed(1)} km` : "—";
   return {

@@ -12,6 +12,7 @@ export function compactLocationSample(sample: LocationSample): LocationSample {
     accuracyM: sample.accuracyM ?? null,
     altitudeAccuracyM: null,
     roadRmsMps2: sample.roadRmsMps2 ?? null,
+    ...(sample.speedLimitMps != null ? { speedLimitMps: sample.speedLimitMps } : {}),
   };
 }
 
@@ -32,6 +33,7 @@ const OMIT_WHEN_NULL = new Set([
   "roadRmsMps2",
   "endT",
   "speedingMps",
+  "speedLimitMps",
 ]);
 
 /** Compact session JSON without null placeholders for fields the archive does not keep. */

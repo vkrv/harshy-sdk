@@ -131,6 +131,9 @@ private fun LocationSample.toJsonObject(): JSONObject {
   if (roadRmsMps2 != null) {
     json.put("roadRmsMps2", roadRmsMps2)
   }
+  if (speedLimitMps != null) {
+    json.put("speedLimitMps", speedLimitMps)
+  }
   return json
 }
 
@@ -181,6 +184,9 @@ private fun DrivingEvent.toJsonObject(): JSONObject {
   json.put("overlaps", JSONArray(overlaps))
   if (impactDirection != null) {
     json.put("impactDirection", impactDirection)
+  }
+  if (speedLimitMps != null) {
+    json.put("speedLimitMps", speedLimitMps)
   }
   return json
 }

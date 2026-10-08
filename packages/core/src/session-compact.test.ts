@@ -95,6 +95,17 @@ describe("session compact", () => {
     expect(reloaded.location[0]?.courseDeg).toBeNull();
     expect(reloaded.location[0]?.roadRmsMps2).toBe(1.4);
     expect(reloaded.config.speedingMps).toBeNull();
+    expect(json).not.toContain("speedLimitMps");
+  });
+
+  it("keeps a mapped speed limit on the sample and omits it when absent", () => {
+    const session = sampleSession();
+    session.location[0] = { ...session.location[0]!, speedLimitMps: 50 / 3.6 };
+    const compact = compactSessionExport(session);
+    expect(compact.location[0]?.speedLimitMps).toBeCloseTo(50 / 3.6);
+    const json = stringifySessionExport(compact);
+    expect(json).toContain("speedLimitMps");
+    expect(parseSessionExport(JSON.parse(json)).location[0]?.speedLimitMps).toBeCloseTo(50 / 3.6);
   });
 
   it("compacts a fully analyzed sample trip without losing GPS points", () => {

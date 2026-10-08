@@ -179,6 +179,32 @@ export {
   type SimulatedTrip,
 } from "./simulate.js";
 export { compactLocationSample, compactSessionExport, stringifySessionExport } from "./session-compact.js";
+export {
+  MAX_ACCURACY_M,
+  MIN_SPAN_M,
+  MIN_SPAN_MS,
+  OVER_MARGIN_MPS,
+  ROAD_TILE_LEAD_M,
+  ROAD_TILE_M,
+  SNAP_METERS,
+  findOverspeedSpans,
+  indexRoadSegments,
+  matchRoadSegment,
+  overpassBboxes,
+  overpassQuery,
+  parseMaxspeedKmh,
+  roadTileAhead,
+  roadTileBox,
+  roadTileBoxForKey,
+  roadTileKey,
+  segmentsFromOverpass,
+  tripHasRecordedSpeeding,
+  type OverpassBBox,
+  type OverspeedSpan,
+  type RoadIndex,
+  type RoadSegment,
+  type SpeedFix,
+} from "./roadSpeed.js";
 export { uploadSession } from "./upload.js";
 export {
   IDLE_HYSTERESIS_MS,

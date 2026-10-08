@@ -222,6 +222,28 @@ describe("detector", () => {
     expect(analyzer.getEvents().filter((event) => event.type === "speeding")).toHaveLength(1);
   });
 
+  it("opens one speeding span when a mapped 50 km/h limit is held at 57 and the settings cap is off", () => {
+    const analyzer = createTripAnalyzer(
+      { speedingMps: null, harshAccelMps2: 20 },
+      { sessionId: "road-limit", startedAtMs: 0, device: { platform: "web", model: "test" } },
+    );
+    const limit = 50 / 3.6;
+    const speed = 57 / 3.6;
+    const sample = (t: number) => ({ ...loc(t, speed), speedLimitMps: limit });
+    const first = analyzer.pushLocation(sample(0));
+    expect(first.newEvents.filter((event) => event.type === "speeding")).toHaveLength(0);
+    expect(first.metrics.speedLimitMps).toBeCloseTo(limit);
+    expect(analyzer.pushLocation(sample(1000)).newEvents.filter((event) => event.type === "speeding")).toHaveLength(0);
+    const opened = analyzer.pushLocation(sample(2000));
+    const span = opened.newEvents.find((event) => event.type === "speeding");
+    expect(span?.t).toBe(0);
+    expect(span?.speedLimitMps).toBeCloseTo(limit);
+    expect(span?.endT).toBeNull();
+    expect(analyzer.getEvents().filter((event) => event.type === "speeding")).toHaveLength(1);
+    const dropped = analyzer.pushLocation({ ...loc(3000, 10), speedLimitMps: limit });
+    expect(dropped.newEvents.find((event) => event.type === "speeding")?.endT).toBe(3000);
+  });
+
   it("emits a swerve when yaw is harsh but lateral g is not a corner", () => {
     const analyzer = createTripAnalyzer(undefined, {
       sessionId: "swerve",

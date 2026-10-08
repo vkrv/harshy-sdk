@@ -22,6 +22,7 @@ data class LocationSample(
   val accuracyM: Double? = null,
   val altitudeAccuracyM: Double? = null,
   val roadRmsMps2: Double? = null,
+  val speedLimitMps: Double? = null,
 )
 
 data class ImuSample(
@@ -115,6 +116,7 @@ class DrivingEvent(
   var lat: Double?,
   var lon: Double?,
   var speedMps: Double?,
+  var speedLimitMps: Double? = null,
   val overlaps: MutableList<String> = mutableListOf(),
   var impactDirection: String? = null,
 )

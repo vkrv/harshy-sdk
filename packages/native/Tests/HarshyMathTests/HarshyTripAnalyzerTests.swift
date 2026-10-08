@@ -432,6 +432,37 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertNil((json["config"] as? [String: Any])?["speedingMps"])
   }
 
+  func testOpensSpeedingSpanWhenMappedLimitIsHeld() {
+    let analyzer = HarshyTripAnalyzer(
+      config: quiet,
+      sessionId: "road-limit",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let limit = 50.0 / 3.6
+    let speed = 57.0 / 3.6
+    func sample(_ t: Double, _ velocity: Double) -> HarshyLocationSample {
+      var fix = loc(t, speedMps: velocity)
+      fix.speedLimitMps = limit
+      return fix
+    }
+    XCTAssertTrue(analyzer.pushLocation(sample(0, speed)).newEvents.allSatisfy { $0.type != harshyEventSpeeding })
+    XCTAssertTrue(analyzer.pushLocation(sample(1000, speed)).newEvents.allSatisfy { $0.type != harshyEventSpeeding })
+    let opened = analyzer.pushLocation(sample(2000, speed)).newEvents.filter { $0.type == harshyEventSpeeding }
+    XCTAssertEqual(opened.count, 1)
+    XCTAssertEqual(opened[0].t, 0)
+    XCTAssertEqual(opened[0].speedLimitMps ?? -1, limit, accuracy: 0.001)
+    let closed = analyzer.pushLocation(sample(3000, 10)).newEvents.filter { $0.type == harshyEventSpeeding }
+    XCTAssertEqual(closed.count, 1)
+    XCTAssertEqual(closed[0].endT ?? -1, 3000)
+    let json = analyzer.finalize(endedAtMs: 3000).toJSONObject()
+    let event = (json["events"] as? [[String: Any]])?.first
+    XCTAssertEqual(event?["type"] as? String, "speeding")
+    XCTAssertNotNil(event?["speedLimitMps"])
+    let stored = (json["location"] as? [[String: Any]])?.first
+    XCTAssertNotNil(stored?["speedLimitMps"])
+  }
+
   func testSessionJsonIncludesTrigger() {
     let session = harshyAnalyzeTrip(
       location: [loc(0, speedMps: 5)],

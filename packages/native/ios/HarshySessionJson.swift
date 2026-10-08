@@ -136,6 +136,9 @@ extension HarshyLocationSample {
     if let roadRmsMps2 {
       json["roadRmsMps2"] = roadRmsMps2
     }
+    if let speedLimitMps {
+      json["speedLimitMps"] = speedLimitMps
+    }
     return json
   }
 }
@@ -180,6 +183,9 @@ extension HarshyDrivingEvent {
     }
     if let impactDirection {
       json["impactDirection"] = impactDirection
+    }
+    if let speedLimitMps {
+      json["speedLimitMps"] = speedLimitMps
     }
     return json
   }

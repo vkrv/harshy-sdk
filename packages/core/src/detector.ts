@@ -34,6 +34,7 @@ import {
   SMOOTH_HOLD_MS,
   relativeScore,
 } from "./config.js";
+import { MIN_SPAN_MS, OVER_MARGIN_MPS } from "./roadSpeed.js";
 import { HARSHY_SDK_VERSION } from "./version.js";
 import {
   isSuspiciousSpeedLeap,
@@ -169,6 +170,12 @@ type AnalyzerState = {
   /** How many kilometre buckets have already been closed. */
   awardedKm: number;
   openSpeeding: DrivingEvent | null;
+  /** Road-limit span waits this long over the signed limit before it opens. */
+  speedingHoldSinceT: number | null;
+  speedingHoldPeak: number;
+  speedingHoldLat: number | null;
+  speedingHoldLon: number | null;
+  speedingHoldCap: number | null;
   openHandheld: DrivingEvent | null;
   handheld: HandheldFilter;
   distanceM: number;
@@ -460,6 +467,16 @@ function currentSpeed(state: AnalyzerState): number | null {
   return state.lastGoodLocation?.speedMps ?? null;
 }
 
+const ROAD_LIMIT_CHANGE_MPS = 0.3;
+
+function clearSpeedingHold(state: AnalyzerState): void {
+  state.speedingHoldSinceT = null;
+  state.speedingHoldPeak = 0;
+  state.speedingHoldLat = null;
+  state.speedingHoldLon = null;
+  state.speedingHoldCap = null;
+}
+
 function closeSpeedingSpan(state: AnalyzerState, t: number): DrivingEvent | null {
   const open = state.openSpeeding;
   if (!open || open.endT != null) {
@@ -471,49 +488,59 @@ function closeSpeedingSpan(state: AnalyzerState, t: number): DrivingEvent | null
   return open;
 }
 
-function updateSpeedingSpan(
+function openSpeedingEvent(
+  state: AnalyzerState,
+  t: number,
+  speed: number,
+  cap: number,
+  location: LocationSample | null,
+  lat: number | null,
+  lon: number | null,
+): DrivingEvent {
+  const level = harshEventLevel(speed, cap, state.config.harshMediumX, state.config.harshHeavyX);
+  const event: DrivingEvent = {
+    id: `speeding-${t}`,
+    type: "speeding",
+    t,
+    endT: null,
+    peak: speed,
+    severity: severityFromPeak(speed, cap),
+    level,
+    lat: lat ?? location?.lat ?? null,
+    lon: lon ?? location?.lon ?? null,
+    speedMps: speed,
+    speedLimitMps: cap,
+    overlaps: [],
+  };
+  state.events.push(event);
+  state.openSpeeding = event;
+  tagCompoundOverlaps(state.events, event, t, state.config.compoundWindowMs);
+  return event;
+}
+
+function limitsDiffer(left: number | null | undefined, right: number): boolean {
+  return left != null && Math.abs(left - right) >= ROAD_LIMIT_CHANGE_MPS;
+}
+
+/** Settings cap: open on the first sample at or above the cap. */
+function updateSettingsSpeeding(
   state: AnalyzerState,
   t: number,
   speed: number | null,
+  cap: number,
   location: LocationSample | null,
   moving: boolean,
 ): DrivingEvent | null {
-  const cap = state.config.speedingMps;
-  if (cap == null) {
-    return closeSpeedingSpan(state, t);
-  }
   const over = moving && speed != null && speed >= cap;
-  if (over) {
-    const level = harshEventLevel(
-      speed,
-      cap,
-      state.config.harshMediumX,
-      state.config.harshHeavyX,
-    );
+  if (over && speed != null) {
     if (!state.openSpeeding) {
-      const event: DrivingEvent = {
-        id: `speeding-${t}`,
-        type: "speeding",
-        t,
-        endT: null,
-        peak: speed,
-        severity: severityFromPeak(speed, cap),
-        level,
-        lat: location?.lat ?? null,
-        lon: location?.lon ?? null,
-        speedMps: speed,
-        overlaps: [],
-      };
-      state.events.push(event);
-      state.openSpeeding = event;
-      tagCompoundOverlaps(state.events, event, t, state.config.compoundWindowMs);
-      return event;
+      return openSpeedingEvent(state, t, speed, cap, location, location?.lat ?? null, location?.lon ?? null);
     }
     const open = state.openSpeeding;
     if (speed > open.peak) {
       open.peak = speed;
       open.severity = severityFromPeak(speed, cap);
-      open.level = level;
+      open.level = harshEventLevel(speed, cap, state.config.harshMediumX, state.config.harshHeavyX);
       open.lat = location?.lat ?? open.lat;
       open.lon = location?.lon ?? open.lon;
       open.speedMps = speed;
@@ -522,6 +549,87 @@ function updateSpeedingSpan(
     }
     return null;
   }
+  const exit = cap * state.config.speedingExitX;
+  if (state.openSpeeding && (speed == null || speed < exit || !moving)) {
+    return closeSpeedingSpan(state, t);
+  }
+  return null;
+}
+
+function updateSpeedingSpan(
+  state: AnalyzerState,
+  t: number,
+  speed: number | null,
+  location: LocationSample | null,
+  moving: boolean,
+): DrivingEvent | null {
+  const roadLimit = location?.speedLimitMps;
+  const road = roadLimit != null && roadLimit > 0;
+  const cap = road ? roadLimit : state.config.speedingMps;
+  if (cap == null || !(cap > 0)) {
+    clearSpeedingHold(state);
+    return closeSpeedingSpan(state, t);
+  }
+  const limitChanged = limitsDiffer(state.openSpeeding?.speedLimitMps, cap);
+  if (!road) {
+    clearSpeedingHold(state);
+    if (limitChanged) {
+      closeSpeedingSpan(state, t);
+    }
+    return updateSettingsSpeeding(state, t, speed, cap, location, moving);
+  }
+  if (limitChanged) {
+    closeSpeedingSpan(state, t);
+    clearSpeedingHold(state);
+  }
+  const over = moving && speed != null && speed > cap + OVER_MARGIN_MPS;
+  if (over && speed != null) {
+    if (state.openSpeeding) {
+      clearSpeedingHold(state);
+      const open = state.openSpeeding;
+      if (speed > open.peak) {
+        open.peak = speed;
+        open.severity = severityFromPeak(speed, cap);
+        open.level = harshEventLevel(speed, cap, state.config.harshMediumX, state.config.harshHeavyX);
+        open.lat = location?.lat ?? open.lat;
+        open.lon = location?.lon ?? open.lon;
+        open.speedMps = speed;
+        tagCompoundOverlaps(state.events, open, t, state.config.compoundWindowMs);
+        return open;
+      }
+      return null;
+    }
+    const sameHold =
+      state.speedingHoldSinceT != null &&
+      state.speedingHoldCap != null &&
+      !limitsDiffer(state.speedingHoldCap, cap);
+    if (!sameHold) {
+      state.speedingHoldSinceT = t;
+      state.speedingHoldCap = cap;
+      state.speedingHoldPeak = speed;
+      state.speedingHoldLat = location?.lat ?? null;
+      state.speedingHoldLon = location?.lon ?? null;
+    } else if (speed > state.speedingHoldPeak) {
+      state.speedingHoldPeak = speed;
+      state.speedingHoldLat = location?.lat ?? state.speedingHoldLat;
+      state.speedingHoldLon = location?.lon ?? state.speedingHoldLon;
+    }
+    if (state.speedingHoldSinceT != null && t - state.speedingHoldSinceT >= MIN_SPAN_MS) {
+      const opened = openSpeedingEvent(
+        state,
+        state.speedingHoldSinceT,
+        state.speedingHoldPeak,
+        cap,
+        location,
+        state.speedingHoldLat,
+        state.speedingHoldLon,
+      );
+      clearSpeedingHold(state);
+      return opened;
+    }
+    return null;
+  }
+  clearSpeedingHold(state);
   const exit = cap * state.config.speedingExitX;
   if (state.openSpeeding && (speed == null || speed < exit || !moving)) {
     return closeSpeedingSpan(state, t);
@@ -1130,6 +1238,15 @@ function updateSmoothCredits(
   return emitted;
 }
 
+function liveSpeedLimitMps(state: AnalyzerState): number | null {
+  const road = state.lastGoodLocation?.speedLimitMps;
+  if (road != null && road > 0) {
+    return road;
+  }
+  const cap = state.config.speedingMps;
+  return cap != null && cap > 0 ? cap : null;
+}
+
 function buildMetrics(state: AnalyzerState, t: number): LiveMetrics {
   const durationMs = Math.max(0, t - state.startedAtMs);
   const speedMps = currentSpeed(state);
@@ -1164,6 +1281,7 @@ function buildMetrics(state: AnalyzerState, t: number): LiveMetrics {
     t,
     speedMps,
     speedKmh: speedMps == null ? null : mpsToKmh(speedMps),
+    speedLimitMps: liveSpeedLimitMps(state),
     headingDeg: state.heading.headingDeg,
     altitudeM: state.lastGoodLocation?.altitudeM ?? null,
     locationAccuracyM: state.lastGoodLocation?.accuracyM ?? null,
@@ -1510,6 +1628,11 @@ export function createTripAnalyzer(
     spoiledKm: new Set(),
     awardedKm: 0,
     openSpeeding: null,
+    speedingHoldSinceT: null,
+    speedingHoldPeak: 0,
+    speedingHoldLat: null,
+    speedingHoldLon: null,
+    speedingHoldCap: null,
     openHandheld: null,
     handheld: emptyHandheldFilter(),
     distanceM: 0,

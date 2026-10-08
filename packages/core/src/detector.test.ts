@@ -1219,4 +1219,52 @@ describe("detector", () => {
     expect(session.imu.length).toBeLessThanOrEqual(7200);
     expect(session.location[0]?.roadRmsMps2).toBeGreaterThan(1);
   });
+  it("keeps the same detection with a short IMU window", () => {
+    expectShortWindowMatchesFullBuffer(generateSampleTrip());
+  });
+
+  it("keeps the same road RMS with a short IMU window when fixes lack speed", () => {
+    const trip = generateSampleTrip();
+    expectShortWindowMatchesFullBuffer({
+      ...trip,
+      location: trip.location.map((sample, i) => (i % 3 === 1 ? { ...sample, speedMps: null } : sample)),
+    });
+  });
+
+  function expectShortWindowMatchesFullBuffer(trip: ReturnType<typeof generateSampleTrip>) {
+    const stream = (maxImuSamples?: number) => {
+      const analyzer = createTripAnalyzer(undefined, {
+        sessionId: trip.sessionId,
+        startedAtMs: trip.startedAtMs,
+        device: { platform: "web", model: "sim" },
+        imuHz: 25,
+        maxImuSamples,
+      });
+      let li = 0;
+      let ii = 0;
+      while (li < trip.location.length || ii < trip.imu.length) {
+        const loc = trip.location[li];
+        const imu = trip.imu[ii];
+        if (loc && (!imu || loc.t <= imu.t)) {
+          analyzer.pushLocation(loc);
+          li += 1;
+        } else if (imu) {
+          analyzer.pushImu(imu);
+          ii += 1;
+        }
+      }
+      return analyzer.finalize(trip.endedAtMs);
+    };
+    const full = stream();
+    const short = stream(50);
+    expect(short.imu.length).toBeLessThanOrEqual(50);
+    expect(full.imu.length).toBe(trip.imu.length);
+    expect(short.events.map((event) => [event.type, event.level, event.t, event.peak])).toEqual(
+      full.events.map((event) => [event.type, event.level, event.t, event.peak]),
+    );
+    expect(short.metrics).toEqual(full.metrics);
+    expect(short.location.map((sample) => sample.roadRmsMps2)).toEqual(
+      full.location.map((sample) => sample.roadRmsMps2),
+    );
+  }
 });

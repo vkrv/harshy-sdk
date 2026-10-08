@@ -102,6 +102,29 @@ val session = analyzeTrip(
 )
 ```
 
+Headless recording (the host owns location and the process lifecycle; no engine, foreground service or journal):
+
+```kotlin
+val recorder = HeadlessTripRecorder(
+  context = context,
+  sessionId = "trip-1",
+  detector = detectorConfigFromMap(remoteDetectorMap),
+  capture = nativeStartOptionsFromMap(remoteCaptureMap, NativeStartOptions(imuHz = 25, locationIntervalMs = 1_000, background = false)),
+  maxImuSamples = 25 * 120, // detection only looks back seconds; keep 2 min when raw IMU is not exported
+  listener = object : HeadlessTripRecorder.Listener {
+    override fun onPush(push: AnalyzerPush) { /* push.newEvents, push.metrics */ }
+    override fun onFinalized(session: SessionExport) { upload(compactSessionExport(session)) }
+  },
+)
+recorder.start()
+recorder.offerLocation(location) // from your own location stream, any thread
+recorder.stop()                  // finalizes on the recorder thread
+```
+
+`HeadlessTripRecorder` registers the IMU sensors the detector reads, samples them at `capture.imuHz`, thins offered locations to `capture.locationIntervalMs`, and stamps every sample with `HarshyClock`. Listener callbacks run on its thread. Hosts that capture samples themselves can use the same pieces directly: `HarshyClock.monotonic()`, `Location.toLocationSample`, `imuSampleOf`, `TripAnalyzer(..., maxImuSamples = ...)` and `compactSessionExport`. Stamp samples with `HarshyClock`, not `System.currentTimeMillis()`: a wall-clock correction mid-trip would shift `t` and distort speed and acceleration deltas. Create one clock per trip, since its epoch offset is fixed when it is created. The engine behind `HarshyClient` still stamps with the wall clock.
+
+`detectorConfigFromMap(map)` and `nativeStartOptionsFromMap(map)` read loosely typed maps such as remote configuration, and both ignore unknown keys. A detector value that is not a number or breaks the `@harshy/core` schema bounds keeps the base value. Capture rates are rounded and clamped instead: `imuHz` to `IMU_HZ_RANGE` and `locationIntervalMs` to `LOCATION_INTERVAL_MS_RANGE`. `nativeStartOptionsFromMap` reads only those two rates; `background`, `trigger` and other keys keep the base value.
+
 ## Native iOS
 
 Add the Swift package at `packages/native` (Xcode → Add Package Dependency → Add Local). It excludes the Expo module.

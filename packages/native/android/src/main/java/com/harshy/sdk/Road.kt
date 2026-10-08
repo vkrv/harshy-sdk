@@ -19,6 +19,42 @@ internal fun verticalLinearAccel(sample: ImuSample): Double {
   return abs(if (linear != null) linear.z else sample.accel.z)
 }
 
+/** Road RMS for one GPS sample from the IMU seen so far. Matches `roadRmsForLocation` in `@harshy/core`. */
+internal fun roadRmsForLocation(
+  sample: LocationSample,
+  imu: List<ImuSample>,
+  startedAtMs: Double,
+  jerkSettleMs: Double,
+  minSpeedMps: Double,
+  windowMs: Double = ROAD_WINDOW_MS,
+): Double? {
+  val settleUntil = startedAtMs + jerkSettleMs
+  val speed = sample.speedMps ?: 0.0
+  if (sample.t < settleUntil || speed < minSpeedMps || imu.isEmpty()) {
+    return null
+  }
+  val lo = sample.t - windowMs
+  val hi = sample.t
+  var sumSq = 0.0
+  var n = 0
+  for (i in imu.indices.reversed()) {
+    val imuSample = imu[i]
+    if (imuSample.t > hi) {
+      continue
+    }
+    if (imuSample.t < lo) {
+      break
+    }
+    if (imuSample.t < settleUntil) {
+      continue
+    }
+    val vertical = verticalLinearAccel(imuSample)
+    sumSq += vertical * vertical
+    n += 1
+  }
+  return if (n == 0) null else sqrt(sumSq / n)
+}
+
 internal fun assessRoad(
   location: List<LocationSample>,
   imu: List<ImuSample>,

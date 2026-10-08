@@ -368,7 +368,7 @@ class HarshyClient @JvmOverloads constructor(
     val startedAtMs = snap["startedAtMs"].asDouble() ?: System.currentTimeMillis().toDouble()
     val merged = mergeDetectorConfig(detector ?: detectorConfig)
     val trigger = parseTripTrigger(snap["trigger"] as? String)
-    val next = TripAnalyzer(merged, id, startedAtMs, device, trigger)
+    val next = TripAnalyzer(merged, id, startedAtMs, device, trigger, captureFromSnapshot(snap["capture"]))
     var lastMetrics: LiveMetrics? = null
     for (sample in parsedLocation) {
       lastMetrics = next.pushLocation(sample).metrics
@@ -399,14 +399,14 @@ class HarshyClient @JvmOverloads constructor(
 
   private fun trimLastRawLocked() {
     val raw = lastRaw ?: return
-    val maxLoc = TripIdleGate.MAX_LOCATION_SAMPLES
+    val maxLoc = MAX_LOCATION_SAMPLES
     if (raw.location.size > maxLoc) {
-      val target = TripIdleGate.ringTarget(maxLoc)
+      val target = ringTrimTarget(maxLoc)
       raw.location.subList(0, raw.location.size - target).clear()
     }
-    val maxImu = TripIdleGate.maxImuSamples(50)
+    val maxImu = maxImuSamples(50)
     if (raw.imu.size > maxImu) {
-      val target = TripIdleGate.ringTarget(maxImu)
+      val target = ringTrimTarget(maxImu)
       raw.imu.subList(0, raw.imu.size - target).clear()
     }
   }
@@ -475,4 +475,14 @@ class HarshyClient @JvmOverloads constructor(
     const val REQUEST_FOREGROUND = 0x4859
     const val REQUEST_BACKGROUND = 0x485A
   }
+}
+
+/** Capture options from an engine snapshot, so an attached analyzer sizes its IMU ring at the real rate. */
+internal fun captureFromSnapshot(raw: Any?): NativeStartOptions? {
+  @Suppress("UNCHECKED_CAST")
+  val map = raw as? Map<String, Any?> ?: return null
+  return nativeStartOptionsFromMap(map).copy(
+    background = map["background"] as? Boolean ?: true,
+    trigger = map["trigger"] as? String,
+  )
 }

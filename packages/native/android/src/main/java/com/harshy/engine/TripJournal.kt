@@ -1,6 +1,8 @@
 package com.harshy.engine
 
 import android.content.Context
+import com.harshy.sdk.MAX_LOCATION_SAMPLES
+import com.harshy.sdk.maxImuSamples
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedWriter
@@ -115,7 +117,7 @@ internal class TripJournal(context: Context) {
     }
   }
 
-  fun loadLocation(maxLines: Int = TripIdleGate.MAX_LOCATION_SAMPLES): List<Map<String, Any?>> {
+  fun loadLocation(maxLines: Int = MAX_LOCATION_SAMPLES): List<Map<String, Any?>> {
     return loadJsonl(locationFile, maxLines)
   }
 
@@ -127,8 +129,8 @@ internal class TripJournal(context: Context) {
     val meta = loadMeta() ?: return null
     return Loaded(
       meta,
-      loadLocation(TripIdleGate.MAX_LOCATION_SAMPLES),
-      loadImu(TripIdleGate.maxImuSamples(meta.imuHz)),
+      loadLocation(MAX_LOCATION_SAMPLES),
+      loadImu(maxImuSamples(meta.imuHz)),
     )
   }
 

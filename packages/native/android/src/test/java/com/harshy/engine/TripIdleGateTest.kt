@@ -1,25 +1,10 @@
 package com.harshy.engine
 
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TripIdleGateTest {
-  @Test
-  fun maxImuSamplesMatchesCoreFormula() {
-    assertEquals(50 * 60 * 120, TripIdleGate.maxImuSamples(50))
-    assertEquals(25 * 60 * 120, TripIdleGate.maxImuSamples(25))
-    assertEquals(1 * 60 * 120, TripIdleGate.maxImuSamples(0))
-  }
-
-  @Test
-  fun ringTargetAppliesTwoPercentSlack() {
-    assertEquals(3, TripIdleGate.ringTarget(3))
-    assertEquals(98, TripIdleGate.ringTarget(100))
-    assertEquals(352_800, TripIdleGate.ringTarget(360_000))
-  }
-
   @Test
   fun needsHysteresisBeforeIdle() {
     val gate = TripIdleGate()

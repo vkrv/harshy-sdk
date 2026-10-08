@@ -108,6 +108,11 @@ export type TripAnalyzerOptions = {
   device: DeviceInfo;
   /** Override IMU Hz used for the live ring cap (default 50). */
   imuHz?: number;
+  /**
+   * Override the IMU ring size. Detection only looks back seconds, so hosts that do not export raw
+   * IMU can keep a short window. Default: `maxImuSamples(imuHz)` (MAX_IMU_MINUTES of samples).
+   */
+  maxImuSamples?: number;
   /** Why capture began. Default `manual`. Distinct from sensor source. */
   trigger?: TripTrigger;
   /** Original native capture options used to start the trip. */
@@ -1485,7 +1490,7 @@ export function createTripAnalyzer(
   configInput: Partial<DetectorConfig> | undefined,
   options: TripAnalyzerOptions,
 ): TripAnalyzer {
-  const maxImu = maxImuSamples(options.imuHz ?? 50);
+  const maxImu = options.maxImuSamples ?? maxImuSamples(options.imuHz ?? 50);
   const state: AnalyzerState = {
     config: mergeDetectorConfig(configInput),
     sessionId: options.sessionId,
@@ -1545,16 +1550,16 @@ export function createTripAnalyzer(
   };
 
   const commitLocation = (sample: LocationSample) => {
-
+    const speedMps = derivedSpeedMps(state.lastGoodLocation, sample) ?? sample.speedMps;
     const withRoad: LocationSample = {
       ...sample,
-      speedMps: derivedSpeedMps(state.lastGoodLocation, sample) ?? sample.speedMps,
+      speedMps,
       // Keep the OS chip course as-is. Filling from the path made every yaw look
       // chip-confirmed and defeated path-only GPS noise gates.
       courseDeg: sample.courseDeg,
       roadRmsMps2:
         sample.roadRmsMps2 ??
-        roadRmsForLocation(sample, state.imu, {
+        roadRmsForLocation({ ...sample, speedMps }, state.imu, {
           startedAtMs: state.startedAtMs,
           jerkSettleMs: state.config.jerkSettleMs,
           minSpeedMps: state.config.minSpeedMps,

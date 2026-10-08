@@ -25,6 +25,12 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.harshy.sdk.IMU_HZ_RANGE
+import com.harshy.sdk.LOCATION_INTERVAL_MS_RANGE
+import com.harshy.sdk.MAX_LOCATION_SAMPLES
+import com.harshy.sdk.maxImuSamples
+import com.harshy.sdk.ringTrimTarget
+import com.harshy.sdk.toLocationSample
 import java.util.ArrayDeque
 import java.util.Collections
 import java.util.UUID
@@ -187,8 +193,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
         emitRunning()
         return
       }
-      imuHz = (options["imuHz"] as? Number)?.toInt()?.coerceIn(5, 100) ?: 25
-      locationIntervalMs = (options["locationIntervalMs"] as? Number)?.toLong()?.coerceIn(200, 5000) ?: 500L
+      imuHz = (options["imuHz"] as? Number)?.toInt()?.coerceIn(IMU_HZ_RANGE) ?: 25
+      locationIntervalMs = (options["locationIntervalMs"] as? Number)?.toLong()?.coerceIn(LOCATION_INTERVAL_MS_RANGE) ?: 500L
       background = options["background"] as? Boolean ?: true
       tripTrigger = parseTripTrigger(options["trigger"] as? String)
 
@@ -243,8 +249,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       if (running || previewing) {
         return
       }
-      imuHz = (options["imuHz"] as? Number)?.toInt()?.coerceIn(5, 100) ?: 50
-      locationIntervalMs = (options["locationIntervalMs"] as? Number)?.toLong()?.coerceIn(200, 5000) ?: 500L
+      imuHz = (options["imuHz"] as? Number)?.toInt()?.coerceIn(IMU_HZ_RANGE) ?: 50
+      locationIntervalMs = (options["locationIntervalMs"] as? Number)?.toLong()?.coerceIn(LOCATION_INTERVAL_MS_RANGE) ?: 500L
       if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) &&
         !hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
       ) {
@@ -293,8 +299,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       }
       sessionId = meta.sessionId
       startedAtMs = meta.startedAtMs
-      imuHz = meta.imuHz.coerceIn(5, 100)
-      locationIntervalMs = meta.locationIntervalMs.coerceIn(200, 5000)
+      imuHz = meta.imuHz.coerceIn(IMU_HZ_RANGE)
+      locationIntervalMs = meta.locationIntervalMs.coerceIn(LOCATION_INTERVAL_MS_RANGE)
       background = meta.background
       tripTrigger = parseTripTrigger(meta.trigger)
       synchronized(locationLock) { locationSamples.clear() }
@@ -304,7 +310,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       vehicleIdle = false
       lastGpsFixAtMs = null
       try {
-        val restoredLoc = journal.loadLocation(TripIdleGate.MAX_LOCATION_SAMPLES)
+        val restoredLoc = journal.loadLocation(MAX_LOCATION_SAMPLES)
         synchronized(locationLock) {
           locationSamples.addAll(restoredLoc)
           capLocation()
@@ -322,7 +328,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
         try {
           // Tail-only, short window — full 2 h IMU restore can OOM after a long trip crash.
           val restoreMax =
-            minOf(TripIdleGate.maxImuSamples(imuHz), imuHz.coerceAtLeast(1) * 60 * 2)
+            minOf(maxImuSamples(imuHz), imuHz.coerceAtLeast(1) * 60 * 2)
           val restored = journal.loadImu(restoreMax)
           synchronized(imuLock) {
             for (sample in restored.asReversed()) {
@@ -1080,12 +1086,12 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       lastGpsFixAtMs = nowMs
     }
     if (previewing && !running) {
-      listener?.onLocation(location.toSampleMap())
+      listener?.onLocation(location.toSampleMap(nowMs))
       noteTripFixArrived()
       return
     }
-    val raw = location.toSampleMap()
-    val tMs = (raw["t"] as? Number)?.toLong() ?: System.currentTimeMillis()
+    val raw = location.toSampleMap(nowMs)
+    val tMs = (raw["t"] as? Number)?.toLong() ?: nowMs
     val speed = raw["speedMps"] as? Double
     val idle = idleGate.advance(tMs, speed)
     vehicleIdle = idle
@@ -1110,7 +1116,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     persist {
       journal.appendLocation(sample)
       if (trimmed) {
-        journal.trimLocation(TripIdleGate.MAX_LOCATION_SAMPLES)
+        journal.trimLocation(MAX_LOCATION_SAMPLES)
       }
     }
     listener?.onLocation(sample)
@@ -1136,7 +1142,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     if (!running && !previewing) {
       return
     }
-    if (running && (vehicleIdle || idleGate.isIdle())) {
+    if (running && (vehicleIdle || idleGate.isIdle(System.currentTimeMillis()))) {
       return
     }
     val accel = lastAccel ?: return
@@ -1162,7 +1168,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       persist {
         journal.appendImu(sample)
         if (trimmed) {
-          journal.trimImu(TripIdleGate.maxImuSamples(imuHz))
+          journal.trimImu(maxImuSamples(imuHz))
         }
       }
     }
@@ -1191,22 +1197,22 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   private fun capLocation() {
-    val max = TripIdleGate.MAX_LOCATION_SAMPLES
+    val max = MAX_LOCATION_SAMPLES
     if (locationSamples.size <= max) {
       return
     }
-    val target = TripIdleGate.ringTarget(max)
+    val target = ringTrimTarget(max)
     while (locationSamples.size > target) {
       locationSamples.removeFirst()
     }
   }
 
   private fun capImu() {
-    val max = TripIdleGate.maxImuSamples(imuHz)
+    val max = maxImuSamples(imuHz)
     if (imuSamples.size <= max) {
       return
     }
-    val target = TripIdleGate.ringTarget(max)
+    val target = ringTrimTarget(max)
     while (imuSamples.size > target) {
       imuSamples.removeFirst()
     }
@@ -1275,21 +1281,18 @@ private fun FloatArray.toVec(): Map<String, Double> {
   )
 }
 
-private fun Location.toSampleMap(): Map<String, Any?> {
+private fun Location.toSampleMap(tMs: Long): Map<String, Any?> {
   // Wall clock — must match IMU `System.currentTimeMillis()` so road RMS windows align.
   // GNSS `time` can drift from the sensor clock and leave every `roadRmsMps2` null.
+  val sample = toLocationSample(tMs)
   return mapOf(
-    "t" to System.currentTimeMillis(),
-    "lat" to latitude,
-    "lon" to longitude,
-    "altitudeM" to altitude,
-    "speedMps" to if (hasSpeed()) speed.toDouble() else null,
-    "courseDeg" to if (hasBearing()) bearing.toDouble() else null,
-    "accuracyM" to if (hasAccuracy()) accuracy.toDouble() else null,
-    "altitudeAccuracyM" to if (Build.VERSION.SDK_INT >= 26 && hasVerticalAccuracy()) {
-      verticalAccuracyMeters.toDouble()
-    } else {
-      null
-    },
+    "t" to tMs,
+    "lat" to sample.lat,
+    "lon" to sample.lon,
+    "altitudeM" to sample.altitudeM,
+    "speedMps" to sample.speedMps,
+    "courseDeg" to sample.courseDeg,
+    "accuracyM" to sample.accuracyM,
+    "altitudeAccuracyM" to sample.altitudeAccuracyM,
   )
 }

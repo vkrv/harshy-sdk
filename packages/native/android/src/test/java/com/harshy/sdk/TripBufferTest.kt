@@ -38,6 +38,14 @@ class TripBufferTest {
   }
 
   @Test
+  fun engineKeepsTwoMinutesInRamAndOneHourInTheJournal() {
+    assertEquals(50 * 60 * 2, engineImuRamSamples(50))
+    assertEquals(50 * 60 * 60, engineImuJournalSamples(50))
+    assertTrue(engineImuRamSamples(50) < engineImuJournalSamples(50))
+    assertTrue(engineImuJournalSamples(50) < maxImuSamples(50))
+  }
+
+  @Test
   fun analyzerCapsRawImuAtTheOverride() {
     val analyzer = analyzer(maxImuSamples = 50)
     repeat(200) { analyzer.pushImu(imu(it * 40.0)) }

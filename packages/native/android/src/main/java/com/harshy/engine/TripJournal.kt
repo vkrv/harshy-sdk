@@ -2,7 +2,7 @@ package com.harshy.engine
 
 import android.content.Context
 import com.harshy.sdk.MAX_LOCATION_SAMPLES
-import com.harshy.sdk.maxImuSamples
+import com.harshy.sdk.engineImuRamSamples
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedWriter
@@ -130,7 +130,7 @@ internal class TripJournal(context: Context) {
     return Loaded(
       meta,
       loadLocation(MAX_LOCATION_SAMPLES),
-      loadImu(maxImuSamples(meta.imuHz)),
+      loadImu(engineImuRamSamples(meta.imuHz)),
     )
   }
 

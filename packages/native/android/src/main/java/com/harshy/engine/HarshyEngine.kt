@@ -28,7 +28,8 @@ import androidx.core.content.ContextCompat
 import com.harshy.sdk.IMU_HZ_RANGE
 import com.harshy.sdk.LOCATION_INTERVAL_MS_RANGE
 import com.harshy.sdk.MAX_LOCATION_SAMPLES
-import com.harshy.sdk.maxImuSamples
+import com.harshy.sdk.engineImuJournalSamples
+import com.harshy.sdk.engineImuRamSamples
 import com.harshy.sdk.ringTrimTarget
 import com.harshy.sdk.toLocationSample
 import java.util.ArrayDeque
@@ -326,9 +327,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
           return@post
         }
         try {
-          // Tail-only, short window — full 2 h IMU restore can OOM after a long trip crash.
-          val restoreMax =
-            minOf(maxImuSamples(imuHz), imuHz.coerceAtLeast(1) * 60 * 2)
+          // Same window as the live deque. The journal may hold an hour; loading it OOMs.
+          val restoreMax = engineImuRamSamples(imuHz)
           val restored = journal.loadImu(restoreMax)
           synchronized(imuLock) {
             for (sample in restored.asReversed()) {
@@ -1168,7 +1168,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       persist {
         journal.appendImu(sample)
         if (trimmed) {
-          journal.trimImu(maxImuSamples(imuHz))
+          journal.trimImu(engineImuJournalSamples(imuHz))
         }
       }
     }
@@ -1208,7 +1208,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   private fun capImu() {
-    val max = maxImuSamples(imuHz)
+    val max = engineImuRamSamples(imuHz)
     if (imuSamples.size <= max) {
       return
     }

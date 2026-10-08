@@ -203,7 +203,7 @@ class HarshyClient @JvmOverloads constructor(
     }
     val merged = mergeDetectorConfig(detector ?: detectorConfig)
     val id = newSessionId()
-    val startedAtMs = engine.clock.nowMs().toDouble()
+    val startedAtMs = System.currentTimeMillis().toDouble()
     val trigger = parseTripTrigger(native.trigger)
     synchronized(lock) {
       detectorConfig = merged
@@ -226,7 +226,6 @@ class HarshyClient @JvmOverloads constructor(
           "locationIntervalMs" to native.locationIntervalMs,
           "background" to native.background,
           "trigger" to trigger,
-          "startedAtMs" to startedAtMs.toLong(),
         ),
       )
     } catch (error: Exception) {
@@ -265,8 +264,8 @@ class HarshyClient @JvmOverloads constructor(
     val snap = engine.stop(includeImu = false)
     engine.listener = null
     val parsedLocation = parseLocationList(snap["location"])
-    val startedAtMs = snap["startedAtMs"].asDouble() ?: prior?.startedAtMs ?: engine.clock.nowMs().toDouble()
-    val endedAtMs = snap["endedAtMs"].asDouble() ?: engine.clock.nowMs().toDouble()
+    val startedAtMs = snap["startedAtMs"].asDouble() ?: prior?.startedAtMs ?: System.currentTimeMillis().toDouble()
+    val endedAtMs = snap["endedAtMs"].asDouble() ?: System.currentTimeMillis().toDouble()
     val id = (snap["sessionId"] as? String) ?: sessionId ?: prior?.sessionId ?: newSessionId()
     val device = prior?.device ?: defaultDevice()
     val config: DetectorConfig
@@ -366,7 +365,7 @@ class HarshyClient @JvmOverloads constructor(
       return false
     }
     val id = (snap["sessionId"] as? String) ?: sessionId ?: newSessionId()
-    val startedAtMs = snap["startedAtMs"].asDouble() ?: engine.clock.nowMs().toDouble()
+    val startedAtMs = snap["startedAtMs"].asDouble() ?: System.currentTimeMillis().toDouble()
     val merged = mergeDetectorConfig(detector ?: detectorConfig)
     val trigger = parseTripTrigger(snap["trigger"] as? String)
     val next = TripAnalyzer(merged, id, startedAtMs, device, trigger, captureFromSnapshot(snap["capture"]))
@@ -400,14 +399,14 @@ class HarshyClient @JvmOverloads constructor(
 
   private fun trimLastRawLocked() {
     val raw = lastRaw ?: return
-    val maxLoc = TripIdleGate.MAX_LOCATION_SAMPLES
+    val maxLoc = MAX_LOCATION_SAMPLES
     if (raw.location.size > maxLoc) {
-      val target = TripIdleGate.ringTarget(maxLoc)
+      val target = ringTrimTarget(maxLoc)
       raw.location.subList(0, raw.location.size - target).clear()
     }
-    val maxImu = TripIdleGate.maxImuSamples(50)
+    val maxImu = maxImuSamples(50)
     if (raw.imu.size > maxImu) {
-      val target = TripIdleGate.ringTarget(maxImu)
+      val target = ringTrimTarget(maxImu)
       raw.imu.subList(0, raw.imu.size - target).clear()
     }
   }
@@ -482,7 +481,7 @@ class HarshyClient @JvmOverloads constructor(
 internal fun captureFromSnapshot(raw: Any?): NativeStartOptions? {
   @Suppress("UNCHECKED_CAST")
   val map = raw as? Map<String, Any?> ?: return null
-  return parseNativeStartOptions(map).copy(
+  return nativeStartOptionsFromMap(map).copy(
     background = map["background"] as? Boolean ?: true,
     trigger = map["trigger"] as? String,
   )

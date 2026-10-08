@@ -41,7 +41,7 @@ internal class TripIdleGate(
     return isIdle(tMs)
   }
 
-  fun isIdle(nowMs: Long = System.currentTimeMillis()): Boolean {
+  fun isIdle(nowMs: Long): Boolean {
     val since = belowSinceMs ?: return false
     return nowMs - since >= hysteresisMs
   }
@@ -68,19 +68,6 @@ internal class TripIdleGate(
     const val IDLE_HYSTERESIS_MS = 2500L
     const val IDLE_LOCATION_INTERVAL_MS = 8_000L
     const val IDLE_LOCATION_MIN_MOVE_M = 15.0
-    const val MAX_LOCATION_SAMPLES = 20_000
-    const val MAX_IMU_MINUTES = 120
-
-    fun maxImuSamples(imuHz: Int): Int = imuHz.coerceAtLeast(1) * 60 * MAX_IMU_MINUTES
-
-    /** Target length after an overflow trim (2% slack) so ring drops are amortized. */
-    fun ringTarget(max: Int): Int {
-      if (max < 50) {
-        return max
-      }
-      val slack = maxOf(1, max / 50)
-      return max - slack
-    }
   }
 }
 

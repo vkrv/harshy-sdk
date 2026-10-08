@@ -20,15 +20,6 @@ class HarshyClockTest {
   }
 
   @Test
-  fun aFixedOffsetContinuesAnEarlierClock() {
-    val restored = MonotonicEpochClock({ elapsedMs }, clock.epochOffsetMs)
-    elapsedMs += 2_000L
-    wallMs += 600_000L
-    assertEquals(clock.nowMs(), restored.nowMs())
-    assertEquals(1_700_000_002_000L, restored.nowMs())
-  }
-
-  @Test
   fun ignoresWallClockJumpsAfterCreation() {
     wallMs += 3_600_000L
     elapsedMs += 10L

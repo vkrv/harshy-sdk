@@ -12,6 +12,12 @@ fun maxImuSamples(imuHz: Int): Int {
   return hz * 60 * MAX_IMU_MINUTES
 }
 
+/** Length to trim an overflowing buffer of cap [max] down to: 2% below it, so the next drop is amortized. */
+internal fun ringTrimTarget(max: Int): Int {
+  val slack = if (max < 50) 0 else maxOf(1, (max * RING_TRIM_SLACK_FRACTION).toInt())
+  return maxOf(0, max - slack)
+}
+
 /** Drops the oldest items past [max], in chunks so the next overflow is amortized. */
 internal fun <T> trimRingBuffer(items: ArrayDeque<T>, max: Int) {
   if (max <= 0) {
@@ -21,7 +27,5 @@ internal fun <T> trimRingBuffer(items: ArrayDeque<T>, max: Int) {
   if (items.size <= max) {
     return
   }
-  val slack = if (max < 50) 0 else maxOf(1, (max * RING_TRIM_SLACK_FRACTION).toInt())
-  val target = maxOf(0, max - slack)
-  repeat(items.size - target) { items.removeFirst() }
+  repeat(items.size - ringTrimTarget(max)) { items.removeFirst() }
 }

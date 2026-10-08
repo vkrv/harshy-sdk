@@ -25,6 +25,13 @@ class TripBufferTest {
   }
 
   @Test
+  fun ringTrimTargetKeepsTwoPercentSlackForLargeCaps() {
+    assertEquals(3, ringTrimTarget(3))
+    assertEquals(98, ringTrimTarget(100))
+    assertEquals(352_800, ringTrimTarget(360_000))
+  }
+
+  @Test
   fun defaultImuCapIsTwoHoursAtTheImuRate() {
     assertEquals(25 * 60 * 120, maxImuSamples(25))
     assertEquals(50 * 60 * 120, maxImuSamples(0))
@@ -47,7 +54,7 @@ class TripBufferTest {
       capture = NativeStartOptions(imuHz = 1),
     )
     repeat(maxImuSamples(1) + 100) { analyzer.pushImu(imu(it * 1_000.0)) }
-    assertTrue(analyzer.finalize().imu.size <= maxImuSamples(1))
+    assertTrue(analyzer.finalize((maxImuSamples(1) + 100) * 1_000.0).imu.size <= maxImuSamples(1))
   }
 
   @Test

@@ -9,16 +9,18 @@ import android.location.Location
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Runs one [TripAnalyzer] on its own thread for a host that owns location and the process
  * lifecycle: no foreground service, no GPS request, no journal, no permissions of its own.
  *
  * The recorder registers the IMU sensors the detector reads (accelerometer, linear acceleration,
- * gyroscope, gravity), samples them at `capture.imuHz`, and thins locations offered through
- * [offerLocation] to `capture.locationIntervalMs`. Every sample is stamped by [clock].
- * [Listener] callbacks run on the recorder thread. The host keeps the process alive while
- * recording, for example with its own foreground service.
+ * gyroscope, gravity) at `capture.imuHz`, samples them at that rate, and thins locations offered
+ * through [offerLocation] to `capture.locationIntervalMs`. Every sample is stamped by [clock]; use one
+ * recorder, and one clock, per trip. [Listener] callbacks run on the recorder thread; an exception
+ * thrown from [Listener.onError] is dropped. The host keeps the process alive while recording, for
+ * example with its own foreground service.
  */
 class HeadlessTripRecorder(
   context: Context,
@@ -52,7 +54,12 @@ class HeadlessTripRecorder(
   )
   private val tickMs = (MILLIS_PER_SECOND / this.capture.imuHz).coerceAtLeast(MIN_TICK_MS)
   private val throttle = LocationThrottle(this.capture.locationIntervalMs)
+  private val sensorPeriodUs = (MICROS_PER_SECOND / this.capture.imuHz).toInt()
   private val thread = HandlerThread(THREAD_NAME)
+  private val started = AtomicBoolean(false)
+
+  /** Set once by [start]; read by [offerLocation] and [stop] from any thread. */
+  @Volatile
   private var handler: Handler? = null
   private var analyzer: TripAnalyzer? = null
 
@@ -97,7 +104,7 @@ class HeadlessTripRecorder(
 
   /** Starts sampling. Call once. */
   fun start() {
-    check(handler == null) { "HeadlessTripRecorder already started" }
+    check(started.compareAndSet(false, true)) { "HeadlessTripRecorder already started" }
     thread.start()
     val looper = Handler(thread.looper)
     handler = looper
@@ -117,14 +124,14 @@ class HeadlessTripRecorder(
         )
         val sensors = SENSORS.filter { (type, _) -> sensorManager.getDefaultSensor(type) != null }
         sensors.forEach { (type, _) ->
-          sensorManager.registerListener(sensorListener, sensorManager.getDefaultSensor(type), SensorManager.SENSOR_DELAY_GAME, looper)
+          sensorManager.registerListener(sensorListener, sensorManager.getDefaultSensor(type), sensorPeriodUs, looper)
         }
         listener.onStarted(startedAtMs, sensors.map { it.second })
         if (!stopped) {
           looper.post(tick)
         }
       } catch (error: Exception) {
-        listener.onError(error)
+        reportError(error)
         if (!stopped) {
           stopped = true
           shutdown()
@@ -173,7 +180,7 @@ class HeadlessTripRecorder(
       try {
         listener.onFinalized(current.finalize(clock.nowMs().toDouble()))
       } catch (error: Exception) {
-        listener.onError(error)
+        reportError(error)
       }
     }
     thread.quitSafely()
@@ -187,14 +194,24 @@ class HeadlessTripRecorder(
       block()
     } catch (error: Exception) {
       stopped = true
-      listener.onError(error)
+      reportError(error)
       shutdown()
+    }
+  }
+
+  /** An exception thrown here would end the recorder thread and crash the host, so it is dropped. */
+  private fun reportError(error: Throwable) {
+    try {
+      listener.onError(error)
+    } catch (_: Exception) {
+      // The listener failed while handling a failure; nothing is left to report it to.
     }
   }
 
   private companion object {
     const val THREAD_NAME = "harshy-headless"
     const val MILLIS_PER_SECOND = 1_000L
+    const val MICROS_PER_SECOND = 1_000_000L
     const val MIN_TICK_MS = 8L
 
     val SENSORS = listOf(

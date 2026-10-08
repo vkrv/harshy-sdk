@@ -192,7 +192,7 @@ class TripAnalyzer(
     return AnalyzerPush(metrics = buildMetrics(sample.t), newEvents = impact + handheldEvents + motion)
   }
 
-  fun finalize(endedAtMs: Double = System.currentTimeMillis().toDouble()): SessionExport {
+  fun finalize(endedAtMs: Double): SessionExport {
     flushImpact(endedAtMs)
     flushHandheld(endedAtMs)
     closeSpeedingSpan(endedAtMs)

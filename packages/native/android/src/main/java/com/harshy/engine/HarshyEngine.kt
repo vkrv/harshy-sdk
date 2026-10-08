@@ -22,14 +22,14 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
-import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
-import com.harshy.sdk.HarshyClock
 import com.harshy.sdk.IMU_HZ_RANGE
 import com.harshy.sdk.LOCATION_INTERVAL_MS_RANGE
-import com.harshy.sdk.MonotonicEpochClock
+import com.harshy.sdk.MAX_LOCATION_SAMPLES
+import com.harshy.sdk.maxImuSamples
+import com.harshy.sdk.ringTrimTarget
 import com.harshy.sdk.toLocationSample
 import java.util.ArrayDeque
 import java.util.Collections
@@ -45,12 +45,6 @@ import java.util.function.Consumer
  * persists a separate flag so “Waiting for a drive” survives the same kill.
  */
 class HarshyEngine(private val context: Context) : SensorEventListener, LocationListener {
-  /**
-   * One time base for every sample `t` and every comparison against it. [HarshyClient] stamps trip
-   * start and end with it too. Replaced on restore so a recovered trip keeps its time base.
-   */
-  @Volatile internal var clock: HarshyClock = HarshyClock.monotonic()
-    private set
   interface Listener {
     fun onLocation(sample: Map<String, Any?>)
     fun onImuBatch(samples: List<Map<String, Any?>>)
@@ -211,8 +205,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       }
 
       sessionId = UUID.randomUUID().toString()
-      // HarshyClient passes the stamp its analyzer starts with, so both agree exactly.
-      startedAtMs = (options["startedAtMs"] as? Number)?.toLong() ?: clock.nowMs()
+      startedAtMs = System.currentTimeMillis()
       synchronized(locationLock) { locationSamples.clear() }
       synchronized(imuLock) { imuSamples.clear() }
       imuBatch.clear()
@@ -227,8 +220,6 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
           locationIntervalMs = locationIntervalMs,
           background = background,
           trigger = tripTrigger,
-          clockOffsetMs = (clock as? MonotonicEpochClock)?.epochOffsetMs,
-          bootCount = bootCount(),
         ),
       )
       if (previewing) {
@@ -306,7 +297,6 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
         journal.clear()
         return false
       }
-      restoredClockOffsetMs(meta, bootCount())?.let { clock = HarshyClock.monotonic(it) }
       sessionId = meta.sessionId
       startedAtMs = meta.startedAtMs
       imuHz = meta.imuHz.coerceIn(IMU_HZ_RANGE)
@@ -320,7 +310,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       vehicleIdle = false
       lastGpsFixAtMs = null
       try {
-        val restoredLoc = journal.loadLocation(TripIdleGate.MAX_LOCATION_SAMPLES)
+        val restoredLoc = journal.loadLocation(MAX_LOCATION_SAMPLES)
         synchronized(locationLock) {
           locationSamples.addAll(restoredLoc)
           capLocation()
@@ -338,7 +328,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
         try {
           // Tail-only, short window — full 2 h IMU restore can OOM after a long trip crash.
           val restoreMax =
-            minOf(TripIdleGate.maxImuSamples(imuHz), imuHz.coerceAtLeast(1) * 60 * 2)
+            minOf(maxImuSamples(imuHz), imuHz.coerceAtLeast(1) * 60 * 2)
           val restored = journal.loadImu(restoreMax)
           synchronized(imuLock) {
             for (sample in restored.asReversed()) {
@@ -387,7 +377,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       flushImuBatch()
       journal.clear()
 
-      val endedAtMs = clock.nowMs()
+      val endedAtMs = System.currentTimeMillis()
       val snapshot = snapshot(endedAtMs, includeImu)
       listener?.onState(
         mapOf(
@@ -500,7 +490,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   fun snapshot(
-    endedAtMs: Long = clock.nowMs(),
+    endedAtMs: Long = System.currentTimeMillis(),
     includeImu: Boolean = true,
   ): Map<String, Any?> {
     return mapOf(
@@ -615,7 +605,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     if (!watching || running) {
       return
     }
-    val nowMs = clock.nowMs()
+    val nowMs = System.currentTimeMillis()
     if (!shouldTakeFix(location, nowMs)) {
       return
     }
@@ -1037,14 +1027,6 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   @SuppressLint("WakelockTimeout")
-  private fun bootCount(): Int? {
-    return try {
-      Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1).takeIf { it >= 0 }
-    } catch (_: Exception) {
-      null
-    }
-  }
-
   private fun acquireWakeLock() {
     if (wakeLock?.isHeld == true) {
       return
@@ -1069,7 +1051,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   override fun onSensorChanged(event: SensorEvent) {
     if (event.sensor.type == Sensor.TYPE_STEP_DETECTOR) {
       if (watching && !running) {
-        lastStepAtMs = clock.nowMs()
+        lastStepAtMs = System.currentTimeMillis()
       }
       return
     }
@@ -1096,7 +1078,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     if (!running && !previewing) {
       return
     }
-    val nowMs = clock.nowMs()
+    val nowMs = System.currentTimeMillis()
     if (!shouldTakeFix(location, nowMs)) {
       return
     }
@@ -1134,7 +1116,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     persist {
       journal.appendLocation(sample)
       if (trimmed) {
-        journal.trimLocation(TripIdleGate.MAX_LOCATION_SAMPLES)
+        journal.trimLocation(MAX_LOCATION_SAMPLES)
       }
     }
     listener?.onLocation(sample)
@@ -1160,13 +1142,13 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     if (!running && !previewing) {
       return
     }
-    if (running && (vehicleIdle || idleGate.isIdle(clock.nowMs()))) {
+    if (running && (vehicleIdle || idleGate.isIdle(System.currentTimeMillis()))) {
       return
     }
     val accel = lastAccel ?: return
     val attitude = attitudeFromRotation(lastRotation)
     val sample = mapOf(
-      "t" to clock.nowMs(),
+      "t" to System.currentTimeMillis(),
       "accel" to accel.toVec(),
       "linearAccel" to lastLinear?.toVec(),
       "gyro" to lastGyro?.toVec(),
@@ -1186,7 +1168,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       persist {
         journal.appendImu(sample)
         if (trimmed) {
-          journal.trimImu(TripIdleGate.maxImuSamples(imuHz))
+          journal.trimImu(maxImuSamples(imuHz))
         }
       }
     }
@@ -1215,22 +1197,22 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   }
 
   private fun capLocation() {
-    val max = TripIdleGate.MAX_LOCATION_SAMPLES
+    val max = MAX_LOCATION_SAMPLES
     if (locationSamples.size <= max) {
       return
     }
-    val target = TripIdleGate.ringTarget(max)
+    val target = ringTrimTarget(max)
     while (locationSamples.size > target) {
       locationSamples.removeFirst()
     }
   }
 
   private fun capImu() {
-    val max = TripIdleGate.maxImuSamples(imuHz)
+    val max = maxImuSamples(imuHz)
     if (imuSamples.size <= max) {
       return
     }
-    val target = TripIdleGate.ringTarget(max)
+    val target = ringTrimTarget(max)
     while (imuSamples.size > target) {
       imuSamples.removeFirst()
     }
@@ -1300,7 +1282,8 @@ private fun FloatArray.toVec(): Map<String, Double> {
 }
 
 private fun Location.toSampleMap(tMs: Long): Map<String, Any?> {
-  // `tMs` comes from the engine clock so GPS and IMU windows align; see `toLocationSample`.
+  // Wall clock — must match IMU `System.currentTimeMillis()` so road RMS windows align.
+  // GNSS `time` can drift from the sensor clock and leave every `roadRmsMps2` null.
   val sample = toLocationSample(tMs)
   return mapOf(
     "t" to tMs,

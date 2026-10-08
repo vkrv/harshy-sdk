@@ -1,5 +1,8 @@
 package com.harshy.sdk
 
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
+
 /** Capture rates the native engines accept. Values outside are clamped. */
 val IMU_HZ_RANGE: IntRange = 5..100
 val LOCATION_INTERVAL_MS_RANGE: LongRange = 200L..5_000L
@@ -12,7 +15,7 @@ val LOCATION_INTERVAL_MS_RANGE: LongRange = 200L..5_000L
  * never discards the rest. `speedingMps` may be null to switch speeding off. A nested `score` map
  * updates the score weights the same way.
  */
-fun parseDetectorConfig(raw: Map<String, Any?>?, base: DetectorConfig = DetectorConfig.DEFAULT): DetectorConfig {
+fun detectorConfigFromMap(raw: Map<String, Any?>?, base: DetectorConfig = DetectorConfig.DEFAULT): DetectorConfig {
   var config = mergeDetectorConfig(base)
   if (raw == null) {
     return config
@@ -89,14 +92,16 @@ fun parseDetectorConfig(raw: Map<String, Any?>?, base: DetectorConfig = Detector
 
 /**
  * Capture options from a loosely typed map, layered on [base]. `imuHz` and `locationIntervalMs`
- * are clamped to [IMU_HZ_RANGE] and [LOCATION_INTERVAL_MS_RANGE]; other keys are ignored.
+ * are rounded and clamped to [IMU_HZ_RANGE] and [LOCATION_INTERVAL_MS_RANGE]. Every other key,
+ * including `background` and `trigger`, is ignored and keeps the [base] value: a remote config tunes
+ * rates only, and `HeadlessTripRecorder` takes the trigger as its own parameter.
  */
-fun parseNativeStartOptions(raw: Map<String, Any?>?, base: NativeStartOptions = NativeStartOptions()): NativeStartOptions {
+fun nativeStartOptionsFromMap(raw: Map<String, Any?>?, base: NativeStartOptions = NativeStartOptions()): NativeStartOptions {
   if (raw == null) {
     return base
   }
-  val imuHz = raw["imuHz"].finiteDouble()?.toInt()?.coerceIn(IMU_HZ_RANGE) ?: base.imuHz
-  val intervalMs = raw["locationIntervalMs"].finiteDouble()?.toLong()?.coerceIn(LOCATION_INTERVAL_MS_RANGE)
+  val imuHz = raw["imuHz"].finiteDouble()?.roundToInt()?.coerceIn(IMU_HZ_RANGE) ?: base.imuHz
+  val intervalMs = raw["locationIntervalMs"].finiteDouble()?.roundToLong()?.coerceIn(LOCATION_INTERVAL_MS_RANGE)
     ?: base.locationIntervalMs
   return base.copy(imuHz = imuHz, locationIntervalMs = intervalMs)
 }

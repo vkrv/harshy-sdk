@@ -1,6 +1,8 @@
 package com.harshy.engine
 
 import android.content.Context
+import com.harshy.sdk.MAX_LOCATION_SAMPLES
+import com.harshy.sdk.maxImuSamples
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedWriter
@@ -36,10 +38,6 @@ internal class TripJournal(context: Context) {
     val locationIntervalMs: Long,
     val background: Boolean,
     val trigger: String = "manual",
-    /** Epoch offset of the clock that stamped this trip, reused on restore within the same boot. */
-    val clockOffsetMs: Long? = null,
-    /** `Settings.Global.BOOT_COUNT` when the trip started; a restore after a reboot cannot reuse the offset. */
-    val bootCount: Int? = null,
   )
 
   data class Loaded(
@@ -119,7 +117,7 @@ internal class TripJournal(context: Context) {
     }
   }
 
-  fun loadLocation(maxLines: Int = TripIdleGate.MAX_LOCATION_SAMPLES): List<Map<String, Any?>> {
+  fun loadLocation(maxLines: Int = MAX_LOCATION_SAMPLES): List<Map<String, Any?>> {
     return loadJsonl(locationFile, maxLines)
   }
 
@@ -131,8 +129,8 @@ internal class TripJournal(context: Context) {
     val meta = loadMeta() ?: return null
     return Loaded(
       meta,
-      loadLocation(TripIdleGate.MAX_LOCATION_SAMPLES),
-      loadImu(TripIdleGate.maxImuSamples(meta.imuHz)),
+      loadLocation(MAX_LOCATION_SAMPLES),
+      loadImu(maxImuSamples(meta.imuHz)),
     )
   }
 
@@ -351,7 +349,7 @@ internal fun parseTripTrigger(value: String?): String {
 }
 
 internal fun tripJournalMetaPayload(meta: TripJournal.Meta): Map<String, Any> {
-  val payload = mutableMapOf<String, Any>(
+  return mapOf(
     "active" to true,
     "sessionId" to meta.sessionId,
     "startedAtMs" to meta.startedAtMs,
@@ -360,16 +358,6 @@ internal fun tripJournalMetaPayload(meta: TripJournal.Meta): Map<String, Any> {
     "background" to meta.background,
     "trigger" to parseTripTrigger(meta.trigger),
   )
-  meta.clockOffsetMs?.let { payload["clockOffsetMs"] = it }
-  meta.bootCount?.let { payload["bootCount"] = it }
-  return payload
-}
-
-/** The journaled clock offset when it is still valid: same boot, both fields recorded. */
-internal fun restoredClockOffsetMs(meta: TripJournal.Meta, currentBootCount: Int?): Long? {
-  val offset = meta.clockOffsetMs ?: return null
-  val bootCount = meta.bootCount ?: return null
-  return if (currentBootCount != null && bootCount == currentBootCount) offset else null
 }
 
 internal fun tripJournalMetaFromFields(
@@ -380,8 +368,6 @@ internal fun tripJournalMetaFromFields(
   locationIntervalMs: Long,
   background: Boolean,
   trigger: String?,
-  clockOffsetMs: Long? = null,
-  bootCount: Int? = null,
 ): TripJournal.Meta? {
   if (!active) {
     return null
@@ -396,8 +382,6 @@ internal fun tripJournalMetaFromFields(
     locationIntervalMs = locationIntervalMs,
     background = background,
     trigger = parseTripTrigger(trigger),
-    clockOffsetMs = clockOffsetMs,
-    bootCount = bootCount,
   )
 }
 
@@ -418,8 +402,6 @@ internal fun tripJournalMetaFromJson(json: JSONObject): TripJournal.Meta? {
     locationIntervalMs = json.optLong("locationIntervalMs", 500L),
     background = json.optBoolean("background", true),
     trigger = json.optString("trigger"),
-    clockOffsetMs = if (json.has("clockOffsetMs")) json.optLong("clockOffsetMs") else null,
-    bootCount = if (json.has("bootCount")) json.optInt("bootCount") else null,
   )
 }
 

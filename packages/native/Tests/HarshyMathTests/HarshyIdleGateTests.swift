@@ -6,6 +6,11 @@ final class HarshyIdleGateTests: XCTestCase {
     XCTAssertEqual(HarshyTripBuffer.maxImuSamples(imuHz: 50), 50 * 60 * 120)
     XCTAssertEqual(HarshyTripBuffer.maxImuSamples(imuHz: 25), 25 * 60 * 120)
     XCTAssertEqual(HarshyTripBuffer.maxImuSamples(imuHz: 0), 1 * 60 * 120)
+    XCTAssertEqual(HarshyTripBuffer.engineImuRamSamples(imuHz: 50), 50 * 60 * 2)
+    XCTAssertLessThan(
+      HarshyTripBuffer.engineImuRamSamples(imuHz: 50),
+      HarshyTripBuffer.maxImuSamples(imuHz: 50)
+    )
   }
 
   func testRingTargetAppliesTwoPercentSlack() {

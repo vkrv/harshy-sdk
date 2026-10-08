@@ -648,7 +648,7 @@ public final class HarshyEngine: NSObject, CLLocationManagerDelegate {
     syncQueue.sync {
       if trip {
         imuSamples.append(sample)
-        HarshyTripBuffer.trimRing(&imuSamples, max: HarshyTripBuffer.maxImuSamples(imuHz: imuHz))
+        HarshyTripBuffer.trimRing(&imuSamples, max: HarshyTripBuffer.engineImuRamSamples(imuHz: imuHz))
       }
       imuBatch.append(sample)
       if imuBatch.count >= Swift.max(2, imuHz / 5) {

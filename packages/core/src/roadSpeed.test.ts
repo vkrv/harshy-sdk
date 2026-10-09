@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   findOverspeedSpans,
+  indexRoadSegments,
   matchRoadSegment,
   overpassBboxes,
   overpassQuery,
@@ -173,6 +174,37 @@ describe("road speed", () => {
     const plan = overpassBboxes(fixes);
     expect(plan.boxes.length).toBeLessThanOrEqual(8);
     expect(plan.truncated).toBe(true);
+  });
+
+  it("snaps a road several kilometres from where the tile index was built", () => {
+    const road: RoadSegment[] = [
+      {
+        id: "kose:0",
+        name: "Kose tee",
+        oneway: false,
+        limitMps: 50 / 3.6,
+        lat0: 59.459,
+        lon0: 24.849,
+        lat1: 59.459,
+        lon1: 24.851,
+        bearingDeg: 90,
+      },
+    ];
+    const index = indexRoadSegments(road, 59.432);
+    const matched = matchRoadSegment(
+      {
+        t: 0,
+        lat: 59.459,
+        lon: 24.85,
+        speedMps: 16.4,
+        courseDeg: 90,
+        accuracyM: 8,
+      },
+      road,
+      null,
+      index,
+    );
+    expect(matched?.name).toBe("Kose tee");
   });
 
   it("snaps one fix to the signed limit", () => {

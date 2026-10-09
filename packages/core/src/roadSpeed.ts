@@ -14,13 +14,16 @@ export const MAX_ACCURACY_M = 40;
 const SAMPLE_GAP_MS = 15_000;
 const CELL_M = 70;
 const MAX_TILES = 8;
-/** Stable ~8 km cache grid. Same size as a long-trace Overpass tile. */
-export const ROAD_TILE_M = 8_000;
+/**
+ * Cache grid. Small enough that one Overpass `out geom` reply finishes and is
+ * saved; a later trip in the same area reads that file from the first fix.
+ */
+export const ROAD_TILE_M = 2_000;
 const TILE_M = ROAD_TILE_M;
 
 const METERS_PER_DEG_LAT = 111_320;
 /** How close to a tile edge (along the heading) before the next tile is prefetched. */
-export const ROAD_TILE_LEAD_M = 1_500;
+export const ROAD_TILE_LEAD_M = 400;
 
 export type SpeedFix = {
   t: number;
@@ -314,9 +317,13 @@ export function findOverspeedSpans(
   return spans;
 }
 
-function buildIndex(segments: readonly RoadSegment[], originLat: number): Map<string, RoadSegment[]> {
-  const index = new Map<string, RoadSegment[]>();
-  const cos = Math.cos((originLat * Math.PI) / 180) || 1;
+function indexCos(originLat: number): number {
+  return Math.cos((originLat * Math.PI) / 180) || 1;
+}
+
+function buildIndex(segments: readonly RoadSegment[], originLat: number): RoadIndex {
+  const cells = new Map<string, RoadSegment[]>();
+  const cos = indexCos(originLat);
   for (const segment of segments) {
     const length = metersBetween(segment.lat0, segment.lon0, segment.lat1, segment.lon1);
     const steps = Math.max(1, Math.ceil(length / CELL_M));
@@ -332,29 +339,31 @@ function buildIndex(segments: readonly RoadSegment[], originLat: number): Map<st
         continue;
       }
       seen.add(key);
-      const bucket = index.get(key);
+      const bucket = cells.get(key);
       if (bucket) {
         bucket.push(segment);
       } else {
-        index.set(key, [segment]);
+        cells.set(key, [segment]);
       }
     }
   }
-  return index;
+  return { originLat, cells };
 }
 
 function matchSegment(
   fix: SpeedFix,
   courseDeg: number | null,
-  index: Map<string, RoadSegment[]>,
+  index: RoadIndex,
   previous: RoadSegment | null,
 ): RoadSegment | null {
-  const cos = Math.cos((fix.lat * Math.PI) / 180) || 1;
+  // Cell keys use the index origin. A fix a few kilometres away must not
+  // recompute cosine from its own latitude — that shifts every key by many cells.
+  const cos = indexCos(index.originLat);
   const [x, y] = cellXY(fix.lat, fix.lon, cos);
   let best: { segment: RoadSegment; distance: number; score: number } | null = null;
   for (let dy = -1; dy <= 1; dy += 1) {
     for (let dx = -1; dx <= 1; dx += 1) {
-      const bucket = index.get(`${x + dx}:${y + dy}`);
+      const bucket = index.cells.get(`${x + dx}:${y + dy}`);
       if (!bucket) {
         continue;
       }
@@ -466,7 +475,11 @@ function angleDelta(a: number, b: number): number {
   return raw > 180 ? 360 - raw : raw;
 }
 
-export type RoadIndex = Map<string, RoadSegment[]>;
+export type RoadIndex = {
+  /** Latitude whose cosine built `cells`. Lookups must keep using it. */
+  originLat: number;
+  cells: Map<string, RoadSegment[]>;
+};
 
 /** Cell index for repeated snaps against one downloaded tile. */
 export function indexRoadSegments(segments: readonly RoadSegment[], originLat: number): RoadIndex {

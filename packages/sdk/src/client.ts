@@ -15,6 +15,7 @@ import {
   emptyIdleMotionState,
   isIdle,
   maxImuSamples,
+  manualEndConfig,
   shouldEndTrip,
   shouldStartTrip,
   trimIdleTailSamples,
@@ -392,11 +393,11 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
   const ingestAutoLocation = (
     sample: { t: number; lat: number; lon: number; speedMps?: number | null; accuracyM?: number | null },
   ): { end: boolean; discard: boolean } => {
-    if (tripTrigger !== "auto") {
+    if (tripTrigger !== "auto" && tripTrigger !== "manual") {
       return { end: false, discard: false };
     }
     const fix = locationToWatchFix(sample);
-    if (tripWarmup) {
+    if (tripTrigger === "auto" && tripWarmup) {
       const committed = shouldStartTrip(
         commitHeuristic,
         fix,
@@ -412,7 +413,11 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
     const decided = shouldEndTrip(
       endHeuristic,
       fix,
-      tripWarmup ? warmupEndConfig(heuristicConfig) : heuristicConfig,
+      tripTrigger === "manual"
+        ? manualEndConfig(heuristicConfig)
+        : tripWarmup
+          ? warmupEndConfig(heuristicConfig)
+          : heuristicConfig,
     );
     endHeuristic = decided.state;
     return { end: decided.end, discard: decided.end && tripWarmup };
@@ -467,7 +472,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
           }
         }
         publishLiveDisplay(result.metrics);
-        if (running && tripTrigger === "auto" && !endingFromWatch) {
+        if (running && (tripTrigger === "auto" || tripTrigger === "manual") && !endingFromWatch) {
           const decided = ingestAutoLocation(sample);
           if (decided.end) {
             requestAutoEnd(decided.discard);
@@ -611,7 +616,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       if (result) {
         lastMetrics = result.metrics;
       }
-      if (trigger === "auto") {
+      if (trigger === "auto" || trigger === "manual") {
         const decided = ingestAutoLocation(sample);
         if (decided.end) {
           shouldAutoStop = true;
@@ -836,7 +841,6 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       const cutIdleTail =
         !discard &&
         endingFromWatch &&
-        priorRaw?.trigger === "auto" &&
         idleStartedAtMs != null;
       const raw = engine
         ? await engine.stop({ handoffToWatch: recordingMode === "auto" })

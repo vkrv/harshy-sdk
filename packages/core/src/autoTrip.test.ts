@@ -12,6 +12,7 @@ import {
   shouldEndTrip,
   shouldStartTrip,
   trimIdleTailSamples,
+  manualEndConfig,
   warmupEndConfig,
   type WatchFix,
 } from "./autoTrip.js";
@@ -228,6 +229,16 @@ describe("trip end heuristic", () => {
     expect(shouldEndTrip(state, east(599_999, 5, 0)).end).toBe(false);
     expect(DEFAULT_TRIP_HEURISTIC_CONFIG.endHoldMs).toBe(600_000);
     expect(shouldEndTrip(state, east(600_000, 5, 0)).end).toBe(true);
+  });
+
+  it("ends a manual trip after 30 min parked, not 29 min", () => {
+    const manual = manualEndConfig();
+    expect(manual.endHoldMs).toBe(DEFAULT_TRIP_HEURISTIC_CONFIG.manualEndHoldMs);
+    expect(manual.endHoldMs).toBe(1_800_000);
+    let state = emptyTripEndState();
+    state = shouldEndTrip(state, east(0, 0, 0), manual).state;
+    expect(shouldEndTrip(state, east(1_740_000, 5, 0), manual).end).toBe(false);
+    expect(shouldEndTrip(state, east(1_800_000, 5, 0), manual).end).toBe(true);
   });
 
   it("aborts warmup after 30 s parked, not 29 s", () => {

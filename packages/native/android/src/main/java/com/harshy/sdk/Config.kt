@@ -4,7 +4,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /** Monotonic SDK stamp on SessionExport. Bump with every intentional SDK change. */
-const val HARSHY_SDK_VERSION = 9
+const val HARSHY_SDK_VERSION = 10
 
 /** Event penalties and smooth credits apply at 1/2. */
 const val SCORE_PENALTY_X = 1.0 / 2.0

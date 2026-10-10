@@ -106,6 +106,7 @@ export {
   shouldEndTrip,
   shouldStartTrip,
   trimIdleTailSamples,
+  manualEndConfig,
   warmupEndConfig,
   IDLE_HYSTERESIS_MS,
   MAX_LOCATION_SAMPLES,

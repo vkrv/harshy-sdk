@@ -119,6 +119,7 @@ export {
   shouldEndTrip,
   shouldStartTrip,
   trimIdleTailSamples,
+  manualEndConfig,
   warmupEndConfig,
   type MotionActivity,
   type TripEndState,

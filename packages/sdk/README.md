@@ -222,7 +222,7 @@ await harshy.disarm();
 | Watch ≠ trip | `arm()` must not start GPS+IMU, the Android trip FGS, or the journal |
 | Same pipeline | Auto calls existing `start({ trigger: "auto" })` / `stop()`; first phase is `warmup` |
 | Warmup abort | 30 s parked (or silence) discards; not History; watch re-arms |
-| Auto-stop trim | After commit, 10 min parked auto `stop()` ends the saved trip at the start of that dwell |
+| Auto-stop trim | After commit, 10 min parked auto `stop()` ends the saved trip at the start of that dwell. A host-started trip does the same after 30 min parked |
 | Manual wins | `start()` while Auto is on records `trigger: "manual"` and suppresses auto until `stop()` |
 | `source` vs `trigger` | `source` is native/simulated sensors; `trigger` is why the trip began |
 | Session JSON | Optional `trigger` on `schemaVersion: 1`; older files parse as `"manual"`. New files stamp monotonic `sdkVersion` (`HARSHY_SDK_VERSION`) |

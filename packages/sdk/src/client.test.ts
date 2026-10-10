@@ -601,6 +601,84 @@ describe("Harshy SDK", () => {
     expect(client.getLastSession()?.location.every((sample) => sample.t <= idleStart)).toBe(true);
   });
 
+  it("recover of a manual trip already parked for 30 min auto-stops and trims the idle tail", async () => {
+    const loc = (t: number, speedMps: number, lon: number): LocationSample => ({
+      t,
+      lat: 32.12345678,
+      lon,
+      altitudeM: null,
+      speedMps,
+      courseDeg: 90,
+      accuracyM: 5,
+      altitudeAccuracyM: null,
+    });
+    const startedAtMs = 1_000;
+    const idleStart = startedAtMs + 60_000;
+    const parked = idleStart + 1_800_000;
+    const lon = (offsetMs: number) => 34.12345678 + offsetMs / 10_000_000;
+    const journal = [
+      loc(startedAtMs, 12, lon(0)),
+      loc(startedAtMs + 30_000, 12, lon(30_000)),
+      loc(idleStart, 0, lon(60_000)),
+      loc(parked, 0, lon(60_000)),
+    ];
+    const client = createHarshy({
+      nativeAvailable: true,
+      createNativeEngine: () => ({
+        kind: "native",
+        getCapabilities: async () => ({
+          location: true,
+          accelerometer: true,
+          linearAcceleration: true,
+          gyroscope: true,
+          magnetometer: true,
+          barometer: false,
+          attitude: true,
+          backgroundLocation: true,
+        }),
+        getPermissionStatus: async () => ({
+          location: "granted",
+          backgroundLocation: "granted",
+          motion: "granted",
+          notifications: "granted",
+        }),
+        requestPermissions: async () => ({
+          location: "granted",
+          backgroundLocation: "granted",
+          motion: "granted",
+          notifications: "granted",
+        }),
+        start: async () => undefined,
+        stop: async () => ({
+          sessionId: "parked-manual",
+          startedAtMs,
+          endedAtMs: parked + 1_000,
+          location: journal,
+          imu: [],
+          trigger: "manual",
+        }),
+        isRunning: async () => true,
+        getSnapshot: async () => ({
+          sessionId: "parked-manual",
+          startedAtMs,
+          endedAtMs: parked,
+          location: journal,
+          imu: [],
+          trigger: "manual",
+        }),
+        subscribe: () => () => undefined,
+      }),
+    });
+
+    expect(await client.recover({ device: { platform: "android", model: "test" } })).toBe(true);
+    await expect.poll(() => client.getState().running).toBe(false);
+    const session = client.getLastSession();
+    expect(session?.trigger).toBe("manual");
+    expect(session?.metrics.durationMs).toBe(60_000);
+    expect(session?.location.every((sample) => sample.t <= idleStart)).toBe(true);
+    expect(session?.location.some((sample) => sample.t === parked)).toBe(false);
+  });
+
   it("recover of an uncommitted parked warmup discards without saving", async () => {
     const startedAtMs = 1_000;
     const idleStart = startedAtMs + 3_000;
@@ -1362,6 +1440,84 @@ describe("Harshy SDK", () => {
     expect(session.trigger).toBe("manual");
     expect(session.metrics.durationMs).toBe(driveMs + holdMs);
     expect(session.location.some((sample) => sample.t === idleStart + holdMs)).toBe(true);
+  });
+
+  it("auto-stops a manual trip after 30 min parked and drops that idle tail", async () => {
+    let onLocation: ((sample: LocationSample) => void) | null = null;
+    let stopEndedAt = 0;
+    const granted = async () => ({
+      location: "granted" as const,
+      backgroundLocation: "granted" as const,
+      motion: "granted" as const,
+      notifications: "granted" as const,
+    });
+    const engine: SensorEngine = {
+      kind: "simulated",
+      getCapabilities: async () => ({
+        location: true,
+        accelerometer: false,
+        linearAcceleration: false,
+        gyroscope: false,
+        magnetometer: false,
+        barometer: false,
+        attitude: false,
+        backgroundLocation: false,
+      }),
+      getPermissionStatus: granted,
+      requestPermissions: granted,
+      start: async () => undefined,
+      stop: async () => ({
+        sessionId: "manual-park",
+        startedAtMs: 1,
+        endedAtMs: stopEndedAt,
+        location: [],
+        imu: [],
+      }),
+      isRunning: async () => false,
+      getSnapshot: async () => ({
+        sessionId: "manual-park",
+        startedAtMs: 1,
+        endedAtMs: stopEndedAt,
+        location: [],
+        imu: [],
+      }),
+      subscribe: (listeners) => {
+        onLocation = listeners.onLocation;
+        return () => {
+          onLocation = null;
+        };
+      },
+    };
+    const loc = (t: number, speedMps: number, lon: number): LocationSample => ({
+      t,
+      lat: 32.12345678,
+      lon,
+      altitudeM: null,
+      speedMps,
+      courseDeg: 90,
+      accuracyM: 5,
+      altitudeAccuracyM: null,
+    });
+    const client = createHarshy({ engine, nativeAvailable: false });
+    await client.start({ trigger: "manual" });
+    const startedAtMs = client.getState().startedAtMs!;
+    const driveMs = 60_000;
+    const idleStart = startedAtMs + driveMs;
+    const holdMs = 1_800_000;
+    stopEndedAt = idleStart + holdMs;
+    const lon = (offsetMs: number) => 34.12345678 + offsetMs / 10_000_000;
+    onLocation?.(loc(startedAtMs, 12, lon(0)));
+    onLocation?.(loc(idleStart, 0, lon(driveMs)));
+    onLocation?.(loc(idleStart + 1_740_000, 0, lon(driveMs)));
+    expect(client.getState().running).toBe(true);
+    onLocation?.(loc(idleStart + holdMs, 0, lon(driveMs)));
+    await expect.poll(() => client.getLastSession()?.trigger).toBe("manual");
+    expect(client.getState().running).toBe(false);
+    const session = client.getLastSession();
+    expect(session?.metrics.durationMs).toBe(driveMs);
+    expect(session?.location.every((sample) => sample.t <= idleStart)).toBe(true);
+    expect(session?.location.some((sample) => sample.t === idleStart)).toBe(true);
+    expect(session?.location.some((sample) => sample.t === idleStart + holdMs)).toBe(false);
   });
 
   it("reverts to manual when armWatch fails", async () => {

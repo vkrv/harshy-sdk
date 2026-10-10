@@ -55,6 +55,13 @@ export type TripHeuristicConfig = {
    */
   warmupEndHoldMs: number;
   /**
+   * How long a **manually started** trip stays parked before auto `stop()`.
+   * Longer than a committed auto trip so a traffic light is not an end, and
+   * short enough that a forgotten Stop does not record the rest of the day.
+   * The parked dwell is cut from the saved trip, same as `endHoldMs`.
+   */
+  manualEndHoldMs: number;
+  /**
    * If the phone moves farther than this while “slow”, treat as traffic crawl,
    * not parked — reset the dwell timer.
    */
@@ -79,6 +86,7 @@ export const DEFAULT_TRIP_HEURISTIC_CONFIG: TripHeuristicConfig = {
   endSpeedMps: 2.5,
   endHoldMs: 600_000,
   warmupEndHoldMs: 30_000,
+  manualEndHoldMs: 1_800_000,
   endRadiusM: 80,
   maxAccuracyM: 50,
   rejectNonAutomotive: true,
@@ -128,6 +136,14 @@ export function warmupEndConfig(
 ): TripHeuristicConfig {
   const config = mergeTripHeuristicConfig(configInput);
   return { ...config, endHoldMs: config.warmupEndHoldMs };
+}
+
+/** Feed `shouldEndTrip` the forgotten-Stop timeout for a host-started trip. */
+export function manualEndConfig(
+  configInput?: Partial<TripHeuristicConfig>,
+): TripHeuristicConfig {
+  const config = mergeTripHeuristicConfig(configInput);
+  return { ...config, endHoldMs: config.manualEndHoldMs };
 }
 
 export function emptyTripStartState(): TripStartState {
@@ -302,9 +318,10 @@ export function shouldStartTrip(
 }
 
 /**
- * Whether an auto-started trip should call existing `stop()`.
- * Manual trips must not use this. During a trip, feed GPS samples
- * (activity typically `unknown` unless the OS stamps one).
+ * Whether a running trip should call existing `stop()`.
+ * Pass `warmupEndConfig` during auto warmup, the default config after an auto
+ * trip commits, and `manualEndConfig` for a host-started trip. During a trip,
+ * feed GPS samples (activity typically `unknown` unless the OS stamps one).
  */
 export function shouldEndTrip(
   state: TripEndState,

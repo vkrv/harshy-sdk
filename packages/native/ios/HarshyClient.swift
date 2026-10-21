@@ -88,7 +88,7 @@ public final class HarshyClient: HarshyEngine.Listener {
   public func start(
     native: HarshyNativeStartOptions = HarshyNativeStartOptions(),
     detector: HarshyDetectorConfig? = nil,
-    device: HarshyDeviceInfo = HarshyDeviceInfo(platform: "ios", model: UIDevice.current.model)
+    device: HarshyDeviceInfo = HarshyDeviceInfo.current
   ) throws {
     if running {
       _ = stop()
@@ -141,7 +141,7 @@ public final class HarshyClient: HarshyEngine.Listener {
   @discardableResult
   public func recover(
     detector: HarshyDetectorConfig? = nil,
-    device: HarshyDeviceInfo = HarshyDeviceInfo(platform: "ios", model: UIDevice.current.model)
+    device: HarshyDeviceInfo = HarshyDeviceInfo.current
   ) -> Bool {
     engine.listener = self
     return attachIfRunning(detector: detector, device: device)
@@ -159,7 +159,7 @@ public final class HarshyClient: HarshyEngine.Listener {
     let endedAtMs = harshyAsDouble(snap["endedAtMs"] as Any?) ?? Date().timeIntervalSince1970 * 1000
     let id = (snap["sessionId"] as? String) ?? sessionId ?? prior?.sessionId ?? harshyNewSessionId()
     lock.lock()
-    let device = prior?.device ?? HarshyDeviceInfo(platform: "ios", model: UIDevice.current.model)
+    let device = prior?.device ?? HarshyDeviceInfo.current
     let config = detectorConfig
     let session: HarshySessionExport
     if let live, var prior {

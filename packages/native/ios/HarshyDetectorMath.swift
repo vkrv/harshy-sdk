@@ -661,6 +661,35 @@ func harshyVerticalLinearAccel(_ sample: HarshyImuSample) -> Double {
   return abs(linear?.z ?? sample.accel.z)
 }
 
+/// Road RMS for one GPS sample from the IMU seen so far. Matches `roadRmsForLocation` in `@harshy/core`.
+func harshyRoadRmsForLocation(
+  sample: HarshyLocationSample,
+  imu: [HarshyImuSample],
+  startedAtMs: Double,
+  jerkSettleMs: Double,
+  minSpeedMps: Double,
+  windowMs: Double = harshyRoadWindowMs
+) -> Double? {
+  let settleUntil = startedAtMs + jerkSettleMs
+  let speed = sample.speedMps ?? 0
+  if sample.t < settleUntil || speed < minSpeedMps || imu.isEmpty {
+    return nil
+  }
+  let lo = sample.t - windowMs
+  let hi = sample.t
+  var sumSq = 0.0
+  var n = 0
+  for imuSample in imu.reversed() {
+    if imuSample.t > hi { continue }
+    if imuSample.t < lo { break }
+    if imuSample.t < settleUntil { continue }
+    let vertical = harshyVerticalLinearAccel(imuSample)
+    sumSq += vertical * vertical
+    n += 1
+  }
+  return n == 0 ? nil : sqrt(sumSq / Double(n))
+}
+
 func harshyAssessRoad(
   location: [HarshyLocationSample],
   imu: [HarshyImuSample],

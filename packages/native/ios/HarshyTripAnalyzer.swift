@@ -17,6 +17,7 @@ public final class HarshyTripAnalyzer {
   public let capture: HarshyNativeStartOptions?
 
   private var config: HarshyDetectorConfig
+  private let imuCap: Int
   private var location: [HarshyLocationSample] = []
   private var imu: [HarshyImuSample] = []
   private var events: [HarshyDrivingEvent] = []
@@ -74,9 +75,12 @@ public final class HarshyTripAnalyzer {
     startedAtMs: Double,
     device: HarshyDeviceInfo,
     trigger: String = "manual",
-    capture: HarshyNativeStartOptions? = nil
+    capture: HarshyNativeStartOptions? = nil,
+    imuHz: Int? = nil,
+    maxImuSamples: Int? = nil
   ) {
     self.config = harshyMergeDetectorConfig(config)
+    self.imuCap = maxImuSamples ?? HarshyTripBuffer.maxImuSamples(imuHz: imuHz ?? capture?.imuHz ?? HarshyTripBuffer.defaultAnalyzerImuHz)
     self.sessionId = sessionId
     self.startedAtMs = startedAtMs
     self.device = device
@@ -134,7 +138,17 @@ public final class HarshyTripAnalyzer {
     // Keep the OS chip course as-is. Filling from the path made every yaw look
     // chip-confirmed and defeated path-only GPS noise gates.
     stored.courseDeg = sample.courseDeg
+    // Stamped now, while the IMU window is still in memory: the IMU ring is capped, so a finalize-time
+    // pass could not reach older fixes.
+    stored.roadRmsMps2 = sample.roadRmsMps2 ?? harshyRoadRmsForLocation(
+      sample: stored,
+      imu: imu,
+      startedAtMs: startedAtMs,
+      jerkSettleMs: config.jerkSettleMs,
+      minSpeedMps: config.minSpeedMps
+    )
     location.append(stored)
+    HarshyTripBuffer.trimRing(&location, max: HarshyTripBuffer.maxLocationSamples)
     let previousGood = lastGoodLocation
     if locationUsable(stored) {
       let previous = previousGood
@@ -197,6 +211,7 @@ public final class HarshyTripAnalyzer {
   @discardableResult
   public func pushImu(_ sample: HarshyImuSample) -> HarshyAnalyzerPush {
     imu.append(sample)
+    HarshyTripBuffer.trimRing(&imu, max: imuCap)
     lastImu = sample
     let impact = ingestImpactImu(sample)
     let handheldEvents = ingestHandheldImu(sample)
@@ -1263,9 +1278,20 @@ public func harshyCreateTripAnalyzer(
   startedAtMs: Double,
   device: HarshyDeviceInfo,
   trigger: String = "manual",
-  capture: HarshyNativeStartOptions? = nil
+  capture: HarshyNativeStartOptions? = nil,
+  imuHz: Int? = nil,
+  maxImuSamples: Int? = nil
 ) -> HarshyTripAnalyzer {
-  HarshyTripAnalyzer(config: config, sessionId: sessionId, startedAtMs: startedAtMs, device: device, trigger: trigger, capture: capture)
+  HarshyTripAnalyzer(
+    config: config,
+    sessionId: sessionId,
+    startedAtMs: startedAtMs,
+    device: device,
+    trigger: trigger,
+    capture: capture,
+    imuHz: imuHz,
+    maxImuSamples: maxImuSamples
+  )
 }
 
 public func harshyScoreExposureScale(

@@ -911,3 +911,75 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshBrake })
   }
 }
+
+final class HarshyTripAnalyzerBufferTests: XCTestCase {
+  private func analyzer(maxImuSamples: Int? = nil, imuHz: Int? = nil) -> HarshyTripAnalyzer {
+    HarshyTripAnalyzer(
+      config: nil,
+      sessionId: "s",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios"),
+      imuHz: imuHz,
+      maxImuSamples: maxImuSamples
+    )
+  }
+
+  private func imuSample(_ t: Double) -> HarshyImuSample {
+    HarshyImuSample(t: t, accel: HarshyVec3(x: 0, y: 0, z: 9.81))
+  }
+
+  func testKeepsOnlyTheNewestImuSamplesPastTheCap() {
+    let analyzer = analyzer(maxImuSamples: 100)
+    for i in 0..<1_000 {
+      analyzer.pushImu(imuSample(Double(i)))
+    }
+    let imu = analyzer.finalize(endedAtMs: 1_000).imu
+    XCTAssertLessThanOrEqual(imu.count, 100)
+    XCTAssertGreaterThan(imu.count, 90)
+    XCTAssertEqual(imu.last?.t, 999)
+  }
+
+  func testDerivesTheImuCapFromTheCaptureRate() {
+    let analyzer = analyzer(imuHz: 5)
+    for i in 0..<2_000 {
+      analyzer.pushImu(imuSample(Double(i)))
+    }
+    // 5 Hz for 120 minutes is 36,000 samples, so nothing is dropped.
+    XCTAssertEqual(analyzer.finalize(endedAtMs: 2_000).imu.count, 2_000)
+  }
+
+  func testStampsRoadRmsOnlineSoACappedImuRingKeepsOlderFixes() {
+    let analyzer = analyzer(maxImuSamples: 10)
+    // 1 m/s^2 of vertical linear acceleration every 100 ms; a fix every second at 10 m/s.
+    var fixes = 0
+    for step in 0..<600 {
+      let t = Double(step) * 100
+      analyzer.pushImu(HarshyImuSample(
+        t: t,
+        accel: HarshyVec3(x: 0, y: 0, z: 10.81),
+        linearAccel: HarshyVec3(x: 0, y: 0, z: 1),
+        gravity: HarshyVec3(x: 0, y: 0, z: 9.81)
+      ))
+      if step % 10 == 0 {
+        fixes += 1
+        analyzer.pushLocation(HarshyLocationSample(t: t, lat: 59.0 + Double(step) * 1e-5, lon: 24.0, speedMps: 10))
+      }
+    }
+    let session = analyzer.finalize(endedAtMs: 60_000)
+    XCTAssertLessThanOrEqual(session.imu.count, 10)
+    let early = session.location.filter { $0.t >= 2_000 && $0.t < 30_000 }
+    XCTAssertFalse(early.isEmpty)
+    for sample in early {
+      XCTAssertEqual(sample.roadRmsMps2 ?? -1, 1, accuracy: 1e-9)
+    }
+  }
+}
+
+final class HarshyDeviceInfoTests: XCTestCase {
+  func testCurrentDeviceReportsTheHardwareIdentifier() {
+    let device = HarshyDeviceInfo.current
+    XCTAssertEqual(device.platform, "ios")
+    XCTAssertFalse(device.model?.isEmpty ?? true)
+    XCTAssertNotEqual(device.model, "iPhone")
+  }
+}

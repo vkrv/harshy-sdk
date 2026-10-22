@@ -35,6 +35,7 @@ public struct HarshyClock {
 }
 
 /// `CLOCK_MONOTONIC_RAW` keeps counting while the device sleeps, like Android's `elapsedRealtime`.
+/// Not `CLOCK_UPTIME_RAW`: it stops while the device sleeps, so `t` would fall behind the wall clock.
 private func harshyElapsedRealtimeMs() -> Int64 {
   Int64(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) / 1_000_000)
 }

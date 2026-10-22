@@ -61,4 +61,19 @@ final class HarshyAppleSamplesTests: XCTestCase {
     XCTAssertNil(sample.attitude)
     XCTAssertNil(sample.barometerHpa)
   }
+
+  func testCaptureTimeSubtractsTheReadingAge() {
+    XCTAssertEqual(harshyCaptureMs(nowMs: 10_000, ageSeconds: 2.5, maxAgeSeconds: 30), 7_500)
+  }
+
+  func testCaptureTimeIsNowForAZeroNegativeOrNonFiniteAge() {
+    for age in [0.0, -0.4, .nan, .infinity] {
+      XCTAssertEqual(harshyCaptureMs(nowMs: 10_000, ageSeconds: age, maxAgeSeconds: 30), 10_000)
+    }
+  }
+
+  func testCaptureTimeIsNowWhenTheAgeIsBeyondTrust() {
+    XCTAssertEqual(harshyCaptureMs(nowMs: 10_000, ageSeconds: 31, maxAgeSeconds: 30), 10_000)
+    XCTAssertEqual(harshyCaptureMs(nowMs: 10_000, ageSeconds: 30, maxAgeSeconds: 30), -20_000)
+  }
 }

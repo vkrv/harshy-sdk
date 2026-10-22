@@ -1,16 +1,19 @@
 import CoreLocation
-import CoreMotion
 import Foundation
 
 /// Runs one `HarshyTripAnalyzer` on its own queue for a host that owns location and the process
 /// lifecycle: no `CLLocationManager`, no authorization prompts, no wake lock or idle-timer changes.
 ///
-/// The recorder starts Core Motion device-motion updates at `capture.imuHz` and thins locations
-/// offered through `offerLocation` to `capture.locationIntervalMs`. Every sample is stamped by `clock`;
-/// use one recorder, and one clock, per trip. Listener callbacks run on the recorder queue. The
-/// recorder holds its listener strongly until the session is finalized, so a listener that owns the
-/// recorder forms a cycle until then. The host keeps the process alive while recording, for example
-/// with its own background location session.
+/// The recorder starts device-motion updates at `capture.imuHz` (Core Motion, through `motion`) and
+/// thins locations offered through `offerLocation` to `capture.locationIntervalMs`. Every sample is
+/// stamped by `clock`, from the sensor's own timestamp (see `harshyCaptureMs`); use one recorder, and
+/// one clock, per trip. Listener callbacks run on the recorder queue. The recorder holds its listener
+/// strongly until the session is finalized, so a listener that owns the recorder forms a cycle until
+/// then.
+///
+/// The host keeps the process alive while recording: `UIBackgroundModes: location` and an active
+/// location session. Core Motion stops delivering once the app is suspended, so a host that only
+/// monitors significant changes or regions gets GPS and no IMU.
 public final class HarshyHeadlessTripRecorder {
   public protocol Listener: AnyObject {
     func harshyRecorder(_ recorder: HarshyHeadlessTripRecorder, didStartAt startedAtMs: Int64, sensors: [String])
@@ -22,6 +25,9 @@ public final class HarshyHeadlessTripRecorder {
   }
 
   private static let sensors = ["accel", "linear_accel", "gyro", "gravity"]
+  /// A fix older than this has an untrustworthy timestamp (a wall clock set by hand), so it is stamped on arrival.
+  private static let maxLocationAgeSeconds = 30.0
+  private static let maxImuAgeSeconds = 1.0
 
   private let sessionId: String
   private let detector: HarshyDetectorConfig?
@@ -34,19 +40,22 @@ public final class HarshyHeadlessTripRecorder {
   private let throttle: HarshyLocationThrottle
   private let queue = DispatchQueue(label: "com.harshy.headless")
   private let motionQueue = OperationQueue()
-  private let motion = CMMotionManager()
+  private let motion: HarshyMotionSource?
   private let stateLock = NSLock()
 
-  /// Both guarded by `stateLock`: read by `offerLocation` and `stop()` from any thread.
+  /// All guarded by `stateLock`: read by `offerLocation` and `stop()` from any thread.
   private var started = false
   /// Set by `stop()`; refuses new work. Work already queued still runs until `shutdown()`.
   private var stopped = false
+  private var startedAtMs: Int64 = 0
+  private var lastLocationMs: Int64?
 
   /// The rest is touched only on `queue`.
   private var listener: Listener?
   private var analyzer: HarshyTripAnalyzer?
   /// Set by `shutdown()`; after it nothing reaches the analyzer or listener.
   private var finished = false
+  private var lastImuMs: Int64?
 
   public init(
     sessionId: String,
@@ -57,7 +66,9 @@ public final class HarshyHeadlessTripRecorder {
     trigger: String = "manual",
     /// IMU ring size passed to `HarshyTripAnalyzer`; keep it small when raw IMU is not exported.
     maxImuSamples: Int? = nil,
-    clock: HarshyClock = .monotonic()
+    clock: HarshyClock = .monotonic(),
+    /// Nil gives GPS and no IMU, which is also what a non-iOS host gets by default.
+    motion: HarshyMotionSource? = harshySystemMotionSource()
   ) {
     self.sessionId = sessionId
     self.listener = listener
@@ -66,6 +77,7 @@ public final class HarshyHeadlessTripRecorder {
     self.trigger = trigger
     self.maxImuSamples = maxImuSamples
     self.clock = clock
+    self.motion = motion
     var clamped = capture
     clamped.imuHz = min(max(capture.imuHz, harshyImuHzRange.lowerBound), harshyImuHzRange.upperBound)
     clamped.locationIntervalMs = min(
@@ -78,14 +90,20 @@ public final class HarshyHeadlessTripRecorder {
     motionQueue.underlyingQueue = queue
   }
 
-  /// Starts sampling. Call once.
+  /// Starts sampling. Call once: a second call is ignored, and trips an `assertionFailure` in debug builds.
   public func start() {
     stateLock.lock()
-    precondition(!started, "HarshyHeadlessTripRecorder already started")
+    defer { stateLock.unlock() }
+    guard !started else {
+      assertionFailure("HarshyHeadlessTripRecorder already started")
+      return
+    }
     started = true
+    // Taken here, not on the queue, so `offerLocation` can tell a fix from before the trip.
+    let startedAtMs = clock.nowMs()
+    self.startedAtMs = startedAtMs
     // Enqueued under the lock so an offerLocation that sees `started` cannot queue ahead of this block.
     queue.async { [self] in
-      let startedAtMs = clock.nowMs()
       analyzer = HarshyTripAnalyzer(
         config: detector,
         sessionId: sessionId,
@@ -100,18 +118,28 @@ public final class HarshyHeadlessTripRecorder {
       let sensors = isStopped ? [] : startMotion()
       listener?.harshyRecorder(self, didStartAt: startedAtMs, sensors: sensors)
     }
-    stateLock.unlock()
   }
 
   /// Offers a platform location fix. Safe from any thread; ignored before `start()` and after `stop()`.
+  ///
+  /// The fix is stamped from `location.timestamp`, so every fix of a `didUpdateLocations` batch keeps its
+  /// own time. A fix from before `start()` is ignored.
   public func offerLocation(_ location: CLLocation) {
-    // Convert on the caller's thread so the fix is stamped when it was offered, not when it is processed.
-    let sample = location.harshyLocationSample(tMs: clock.nowMs())
     stateLock.lock()
     defer { stateLock.unlock() }
     guard started, !stopped else { return }
+    // Stamped under the lock, in call order, so the queue sees non-decreasing times.
+    let capturedMs = harshyCaptureMs(
+      nowMs: clock.nowMs(),
+      ageSeconds: Date().timeIntervalSince(location.timestamp),
+      maxAgeSeconds: Self.maxLocationAgeSeconds
+    )
+    guard capturedMs >= startedAtMs else { return }
+    let tMs = max(capturedMs, lastLocationMs ?? capturedMs)
+    lastLocationMs = tMs
+    let sample = location.harshyLocationSample(tMs: tMs)
     queue.async { [self] in
-      guard !finished, throttle.accept(Int64(sample.t)) else { return }
+      guard !finished, throttle.accept(tMs) else { return }
       if let push = analyzer?.pushLocation(sample) {
         listener?.harshyRecorder(self, didPush: push)
       }
@@ -134,27 +162,33 @@ public final class HarshyHeadlessTripRecorder {
   }
 
   private func startMotion() -> [String] {
-    guard motion.isDeviceMotionAvailable else { return [] }
-    motion.deviceMotionUpdateInterval = 1.0 / Double(capture.imuHz)
-    motion.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: motionQueue) { [weak self] data, error in
-      self?.handleMotion(data, error: error)
+    guard let motion, motion.isAvailable else { return [] }
+    motion.start(intervalSeconds: 1.0 / Double(capture.imuHz), queue: motionQueue) { [weak self] reading, error in
+      self?.handleMotion(reading, error: error)
     }
     return Self.sensors
   }
 
   /// Runs on `queue`, because `motionQueue` targets it.
-  private func handleMotion(_ data: CMDeviceMotion?, error: Error?) {
+  private func handleMotion(_ reading: HarshyMotionReading?, error: Error?) {
     guard !finished, !isStopped else { return }
     if let error {
       fail(error)
       return
     }
-    guard let data else { return }
+    guard let reading else { return }
+    let capturedMs = harshyCaptureMs(
+      nowMs: clock.nowMs(),
+      ageSeconds: reading.ageSeconds,
+      maxAgeSeconds: Self.maxImuAgeSeconds
+    )
+    let tMs = max(capturedMs, lastImuMs ?? capturedMs)
+    lastImuMs = tMs
     let sample = harshyImuSample(
-      tMs: clock.nowMs(),
-      userAccelerationG: HarshyVec3(data.userAcceleration),
-      gravityG: HarshyVec3(data.gravity),
-      rotationRateRadps: HarshyVec3(data.rotationRate)
+      tMs: tMs,
+      userAccelerationG: reading.userAccelerationG,
+      gravityG: reading.gravityG,
+      rotationRateRadps: reading.rotationRateRadps
     )
     if let push = analyzer?.pushImu(sample) {
       listener?.harshyRecorder(self, didPush: push)
@@ -172,21 +206,11 @@ public final class HarshyHeadlessTripRecorder {
   private func shutdown() {
     guard !finished else { return }
     finished = true
-    motion.stopDeviceMotionUpdates()
+    motion?.stop()
     if let current = analyzer {
       analyzer = nil
       listener?.harshyRecorder(self, didFinalize: current.finalize(endedAtMs: Double(clock.nowMs())))
     }
     listener = nil
-  }
-}
-
-private extension HarshyVec3 {
-  init(_ acceleration: CMAcceleration) {
-    self.init(x: acceleration.x, y: acceleration.y, z: acceleration.z)
-  }
-
-  init(_ rotationRate: CMRotationRate) {
-    self.init(x: rotationRate.x, y: rotationRate.y, z: rotationRate.z)
   }
 }

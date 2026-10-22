@@ -177,9 +177,38 @@ let session = harshyAnalyzeTrip(
   sessionId: "fleet-1",
   startedAtMs: started,
   endedAtMs: ended,
-  device: HarshyDeviceInfo(platform: "ios", model: UIDevice.current.model)
+  device: HarshyDeviceInfo.current // model is the hardware identifier, e.g. "iPhone17,3"
 )
 ```
+
+Headless recording (the host owns location and the process lifecycle; no `HarshyEngine`, `CLLocationManager`, authorization prompts or idle-timer changes):
+
+```swift
+final class TripListener: HarshyHeadlessTripRecorder.Listener {
+  func harshyRecorder(_ recorder: HarshyHeadlessTripRecorder, didStartAt startedAtMs: Int64, sensors: [String]) {}
+  func harshyRecorder(_ recorder: HarshyHeadlessTripRecorder, didPush push: HarshyAnalyzerPush) { /* push.newEvents, push.metrics */ }
+  func harshyRecorder(_ recorder: HarshyHeadlessTripRecorder, didFinalize session: HarshySessionExport) { upload(try? harshyCompactSessionExport(session).toJSONString()) }
+  func harshyRecorder(_ recorder: HarshyHeadlessTripRecorder, didFail error: Error) {}
+}
+
+let recorder = HarshyHeadlessTripRecorder(
+  sessionId: "trip-1",
+  listener: tripListener,
+  detector: harshyDetectorConfig(fromMap: remote["detector"] as? [String: Any]),
+  capture: harshyNativeStartOptions(
+    fromMap: remote["capture"] as? [String: Any],
+    base: HarshyNativeStartOptions(imuHz: 25, locationIntervalMs: 1_000, background: false)
+  ),
+  maxImuSamples: 25 * 120 // detection only looks back seconds; keep 2 min when raw IMU is not exported
+)
+recorder.start()
+recorder.offerLocation(location) // a CLLocation from your own location stream, any thread
+recorder.stop()                  // finalizes on the recorder queue
+```
+
+`HarshyHeadlessTripRecorder` starts Core Motion device-motion updates at `capture.imuHz` (through `HarshyCoreMotionSource`, or the `motion:` source you pass), thins offered locations to `capture.locationIntervalMs`, and stamps every sample on a `HarshyClock`. Each sample is stamped from the sensor's own time (`location.timestamp`, the Core Motion timestamp), not when the callback runs, so the fixes of one `didUpdateLocations` batch keep their own times; offer them in order. A fix stamped before `start()` is ignored. Listener callbacks run on its queue, and the recorder releases the listener once the session is finalized. A second `start()` is ignored (an `assertionFailure` in debug builds).
+
+**Background.** The host keeps the process alive: `UIBackgroundModes: location` and an active location session. Core Motion stops delivering once the app is suspended, so a host that only uses significant-change or region monitoring gets GPS and no IMU. The default source owns a `CMMotionManager`; Apple recommends one per app, so a host that already runs one, or runs `HarshyEngine` at the same time, may see lower rates on one of them. Device motion does not ask for the Motion & Fitness permission. Hosts that capture samples themselves can use the same pieces directly: `HarshyClock.monotonic()`, `CLLocation.harshyLocationSample(tMs:)`, `harshyImuSample(tMs:userAccelerationG:gravityG:rotationRateRadps:)`, `harshyCaptureMs(nowMs:ageSeconds:maxAgeSeconds:)` (a reading's capture time from its age), `HarshyTripAnalyzer(..., imuHz:maxImuSamples:)` and `harshyCompactSessionExport`. Stamp samples with `HarshyClock`, not `Date()`: a wall-clock correction mid-trip would shift `t` and distort speed and acceleration deltas. Create one clock per trip, since its epoch offset is fixed when it is created. The engine behind `HarshyClient` still stamps with the wall clock.
 
 Remote configuration and a compact upload (the Swift counterparts of the Kotlin helpers above):
 
@@ -235,4 +264,4 @@ pnpm --filter @harshy/native test:android  # :harshy:testDebugUnitTest via andro
 pnpm --filter @harshy/native test:ios      # swift test (macOS only)
 ```
 
-Android suites live under `android/src/test/java` (detector parity, sample maps, harsh bands, trip-live copy, RoadStamp, idle gate, assessRoad, watch maps, journal trigger). Swift parity is `Tests/HarshyMathTests` via the `HarshyMath` package (analyzer, heading, road, idle, maps, watch activity, RoadStamp).
+Android suites live under `android/src/test/java` (detector parity, sample maps, harsh bands, trip-live copy, RoadStamp, idle gate, assessRoad, watch maps, journal trigger). Swift parity is `Tests/HarshyMathTests` via the `HarshyMath` package (analyzer, heading, road, idle, maps, watch activity, RoadStamp, clock, location throttle, sample mapping, headless recorder against a fake motion source).

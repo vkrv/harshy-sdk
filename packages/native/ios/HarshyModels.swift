@@ -100,6 +100,26 @@ public struct HarshyDeviceInfo: Equatable, Sendable {
     self.platform = platform
     self.model = model
   }
+
+  /// This device, with the hardware identifier as the model (for example `iPhone17,3`), the
+  /// counterpart of Android's `Build.MODEL`. `UIDevice.model` is only ever `iPhone` or `iPad`.
+  public static var current: HarshyDeviceInfo {
+    HarshyDeviceInfo(platform: "ios", model: harshyHardwareModel())
+  }
+}
+
+/// Hardware identifier such as `iPhone17,3`. On the Simulator it is the simulated device's
+/// identifier, not the host Mac's architecture. Nil only if the system returns nothing.
+public func harshyHardwareModel() -> String? {
+  if let simulated = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"], !simulated.isEmpty {
+    return simulated
+  }
+  var info = utsname()
+  uname(&info)
+  let machine = withUnsafeBytes(of: &info.machine) { raw in
+    String(decoding: raw.prefix(while: { $0 != 0 }), as: UTF8.self)
+  }
+  return machine.isEmpty ? nil : machine
 }
 
 public struct HarshyLiveMetrics: Equatable, Sendable {
@@ -290,6 +310,7 @@ func harshyEmptyEventCounts() -> [String: Int] {
 enum HarshyTripBuffer {
   static let maxLocationSamples = 20_000
   static let maxImuMinutes = 120
+  static let defaultAnalyzerImuHz = 50
   /// Live `HarshyEngine` IMU array. Detection only needs seconds. There is no IMU journal on iOS.
   static let engineImuRamMinutes = 2
   static let defaultMinSpeedMps = 2.0

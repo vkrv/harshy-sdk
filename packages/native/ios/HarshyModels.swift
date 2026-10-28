@@ -1,6 +1,6 @@
 import Foundation
 
-public struct HarshyVec3: Equatable, Sendable {
+public struct HarshyVec3: Equatable, Sendable, Encodable {
   public var x: Double
   public var y: Double
   public var z: Double
@@ -12,7 +12,7 @@ public struct HarshyVec3: Equatable, Sendable {
   }
 }
 
-public struct HarshyAttitude: Equatable, Sendable {
+public struct HarshyAttitude: Equatable, Sendable, Encodable {
   public var pitch: Double
   public var roll: Double
   public var yaw: Double
@@ -161,7 +161,7 @@ public struct HarshyClientState: Equatable, Sendable {
   public var sessionId: String?
 }
 
-public struct HarshyNativeStartOptions: Equatable, Sendable {
+public struct HarshyNativeStartOptions: Equatable, Sendable, Encodable {
   public var imuHz: Int
   public var locationIntervalMs: Int
   public var background: Bool

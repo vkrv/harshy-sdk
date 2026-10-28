@@ -56,6 +56,9 @@ class TripAnalyzer(
   private var pathOnlyLateral = false
   private var harshCornerHold: SmoothHold? = null
   private var yawRateRadps: Double? = null
+
+  /** Fix time of the GPS window behind the acceleration, braking, cornering and yaw values. */
+  private var gpsMotionAtT: Double? = null
   private var prevYawRateRadps: Double? = null
   private var prevYawAtT: Double? = null
   private var yawJerkRadps2: Double? = null
@@ -165,6 +168,7 @@ class TripAnalyzer(
     lateralAccelMps2 = accel.lateral
     pathOnlyLateral = accel.pathOnlyLateral
     yawRateRadps = accel.yawRateRadps
+    gpsMotionAtT = lastGoodLocation?.t
     gpsBrake = GpsBrakeSample(
       accel.longitudinal,
       accel.entrySpeedMps,
@@ -663,12 +667,14 @@ class TripAnalyzer(
 
     updateSpeedingSpan(t, speed, loc, moving)?.let { emitted.add(it) }
 
-    val longAccel = longitudinalAccelMps2
+    // IMU ticks between fixes reuse the last GPS window; once it is stale it no longer describes motion.
+    val gpsFresh = gpsMotionAtT?.let { t - it <= GPS_MOTION_MAX_AGE_MS } == true
+    val longAccel = if (gpsFresh) longitudinalAccelMps2 else null
     if (moving && longAccel != null && longAccel >= config.harshAccelMps2) {
       maybeEmit(EVENT_HARSH_ACCEL, t, longAccel, config.harshAccelMps2, loc, speed)?.let {
         emitted.add(it)
       }
-    } else if (gpsHarshBrakeQualifies(gpsBrake, config.minSpeedMps, config.harshBrakeMps2)) {
+    } else if (gpsFresh && gpsHarshBrakeQualifies(gpsBrake, config.minSpeedMps, config.harshBrakeMps2)) {
       maybeEmit(EVENT_HARSH_BRAKE, t, abs(longAccel ?: 0.0), config.harshBrakeMps2, loc, speed)?.let {
         emitted.add(it)
       }
@@ -682,7 +688,7 @@ class TripAnalyzer(
       }
     }
 
-    val latAccel = lateralAccelMps2
+    val latAccel = if (gpsFresh) lateralAccelMps2 else null
     val cornering = moving && latAccel != null && abs(latAccel) >= config.harshCornerMps2
     if (cornering && latAccel != null) {
       val event = if (pathOnlyLateral) {
@@ -696,19 +702,18 @@ class TripAnalyzer(
       if (event != null) {
         emitted.add(event)
       }
-    } else {
+    } else if (gpsFresh) {
       harshCornerHold = null
     }
 
-    val yaw = yawRateRadps
-    resolveSwervePeak(t, speed, cornering, yaw)?.let { peak ->
+    val swervePeak = if (gpsFresh) resolveSwervePeak(t, speed, cornering, yawRateRadps) else null
+    swervePeak?.let { peak ->
       maybeEmit(EVENT_SWERVE, t, peak, config.harshSwerveRadps, loc, speed)?.let { emitted.add(it) }
     }
 
     val accuracy = loc?.accuracyM
     val gpsWeak = loc == null || accuracy == null || accuracy > config.maxLocationAccuracyM
-    val imuMag = lastImu?.linearAccel?.let { magnitude(it) }
-      ?: lastImu?.let { magnitude(it.accel) }
+    val imuMag = lastImu?.let(::motionAccelMagnitude)
     val jerkSettled = t - startedAtMs >= config.jerkSettleMs
     val lastImpact = lastEventAt[POSSIBLE_IMPACT_TYPE]
     val impactQuiet =
@@ -1239,22 +1244,50 @@ fun scoreExposureScale(distanceM: Double, durationMs: Double, config: DetectorCo
   return clamp(1 / max(exposure, 1e-6), SCORE_EXPOSURE_MIN, SCORE_EXPOSURE_MAX)
 }
 
+/**
+ * Points for one event: fixed bands scaled by the event's `score` weight relative to its default.
+ * Distance, time, and severity do not change them. Overlaps do not add a further amount.
+ */
 fun eventScorePoints(event: DrivingEvent, config: DetectorConfig, distanceM: Double): Double {
+  val weights = config.score
+  val defaults = DetectorConfig.DEFAULT.score
   return when (event.type) {
     EVENT_SMOOTH_KM -> when {
       event.peak >= 2.5 -> 3.0
       event.peak >= 1.5 -> 2.0
       else -> 1.0
     }
-    EVENT_SMOOTH_ACCEL, EVENT_SMOOTH_BRAKE -> if (event.peak < SMOOTH_FLOOR_MPS2) 1.0 else 2.0
-    EVENT_SMOOTH_CORNER -> 2.0
-    EVENT_HARSH_ACCEL -> harshBandPoints(event.level, -5.0, -8.0, -12.0)
-    EVENT_HARSH_BRAKE -> harshBandPoints(event.level, -8.0, -12.0, -16.0)
-    EVENT_HARSH_CORNER -> harshBandPoints(event.level, -4.0, -8.0, -12.0)
-    EVENT_SWERVE -> harshBandPoints(event.level, -4.0, -7.0, -10.0)
-    EVENT_JERK -> harshBandPoints(event.level, -3.0, -5.0, -6.0)
+    EVENT_SMOOTH_ACCEL -> weighted(smoothPoints(event.peak), weights.smoothAccel, defaults.smoothAccel)
+    EVENT_SMOOTH_BRAKE -> weighted(smoothPoints(event.peak), weights.smoothBrake, defaults.smoothBrake)
+    EVENT_SMOOTH_CORNER -> weighted(2.0, weights.smoothCorner, defaults.smoothCorner)
+    EVENT_HARSH_ACCEL -> weighted(harshBandPoints(event.level, -5.0, -8.0, -12.0), weights.harshAccel, defaults.harshAccel)
+    EVENT_HARSH_BRAKE -> weighted(harshBandPoints(event.level, -8.0, -12.0, -16.0), weights.harshBrake, defaults.harshBrake)
+    EVENT_HARSH_CORNER -> weighted(harshBandPoints(event.level, -4.0, -8.0, -12.0), weights.harshCorner, defaults.harshCorner)
+    EVENT_SWERVE -> weighted(harshBandPoints(event.level, -4.0, -7.0, -10.0), weights.swerve, defaults.swerve)
+    EVENT_JERK -> weighted(harshBandPoints(event.level, -3.0, -5.0, -6.0), weights.jerk, defaults.jerk)
     else -> 0.0
   }
+}
+
+private fun smoothPoints(peak: Double): Double = if (peak < SMOOTH_FLOOR_MPS2) 1.0 else 2.0
+
+/** Scales a fixed point band by the configured weight relative to its default, so defaults keep the bands. */
+private fun weighted(points: Double, weight: Double, defaultWeight: Double): Double {
+  if (weight == 0.0 || defaultWeight == 0.0) {
+    return 0.0
+  }
+  return points * weight / defaultWeight
+}
+
+/**
+ * Acceleration magnitude without gravity: the linear sensor, else accelerometer minus the gravity
+ * vector, else the raw magnitude minus standard gravity.
+ */
+private fun motionAccelMagnitude(sample: ImuSample): Double {
+  if (sample.linearAccel != null || sample.gravity != null) {
+    return magnitude(sampleLinearAccel(sample))
+  }
+  return abs(magnitude(sample.accel) - STANDARD_GRAVITY_MPS2)
 }
 
 private fun harshBandPoints(level: String, light: Double, medium: Double, heavy: Double): Double {
@@ -1318,21 +1351,4 @@ fun analyzeTrip(
     }
   }
   return analyzer.finalize(endedAtMs)
-}
-
-private fun eventWeight(type: String, config: DetectorConfig): Double {
-  return when (type) {
-    EVENT_HARSH_ACCEL -> config.score.harshAccel
-    EVENT_HARSH_BRAKE -> config.score.harshBrake
-    EVENT_HARSH_CORNER -> config.score.harshCorner
-    EVENT_SWERVE -> config.score.swerve
-    EVENT_SPEEDING -> config.score.speeding
-    EVENT_JERK -> config.score.jerk
-    POSSIBLE_IMPACT_TYPE -> 0.0
-    PHONE_HANDHELD_TYPE -> 0.0
-    EVENT_SMOOTH_ACCEL -> config.score.smoothAccel
-    EVENT_SMOOTH_BRAKE -> config.score.smoothBrake
-    EVENT_SMOOTH_CORNER -> config.score.smoothCorner
-    else -> 0.0
-  }
 }

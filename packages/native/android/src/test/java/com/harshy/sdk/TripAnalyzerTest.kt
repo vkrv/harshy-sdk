@@ -671,6 +671,34 @@ class TripAnalyzerTest {
     assertTrue(analyzer.getEvents().any { it.type == EVENT_HARSH_CORNER })
   }
 
+  @Test
+  fun stillScoresSustainedPathOnlyTurnWhenFixesAreThreeSecondsApartWithImuBetween() {
+    val analyzer = TripAnalyzer(DetectorConfig.DEFAULT, "path-arc-sparse", 0.0, DeviceInfo("android", "test"))
+    var lat = 59.4
+    var lon = 24.8
+    val speed = 10.0
+    var heading = 0.0
+    analyzer.pushLocation(
+      LocationSample(t = 0.0, lat = lat, lon = lon, speedMps = speed, courseDeg = null, accuracyM = 5.0),
+    )
+    for (step in 1..6) {
+      var t = (step - 1) * 3000.0 + 100.0
+      while (t < step * 3000.0) {
+        analyzer.pushImu(restImu(t))
+        t += 100.0
+      }
+      heading += 75.0
+      val next = shift(lat, lon, heading, speed * 3)
+      lat = next.first
+      lon = next.second
+      analyzer.pushLocation(
+        LocationSample(t = step * 3000.0, lat = lat, lon = lon, speedMps = speed, courseDeg = null, accuracyM = 5.0),
+      )
+    }
+
+    assertTrue(analyzer.getEvents().any { it.type == EVENT_HARSH_CORNER })
+  }
+
   private fun mounted(
     t: Double,
     x: Double,
@@ -874,5 +902,91 @@ class TripAnalyzerTest {
     }
     assertTrue(analyzer.getEvents().any { it.type == PHONE_HANDHELD_TYPE })
     assertFalse(analyzer.getEvents().any { it.type == EVENT_HARSH_BRAKE })
+  }
+
+  @Test
+  fun stopsScoringGpsAccelerationOnceNoFreshFixArrives() {
+    val analyzer = TripAnalyzer(null, "stale-gps", 0.0, DeviceInfo(platform = "android", model = "test"))
+    analyzer.pushLocation(loc(0.0, 10.0))
+    analyzer.pushLocation(loc(1_000.0, 14.0))
+    var t = 1_100.0
+    while (t <= 31_000.0) {
+      analyzer.pushImu(restImu(t))
+      t += 100.0
+    }
+
+    assertEquals(1, analyzer.getEvents().count { it.type == EVENT_HARSH_ACCEL })
+  }
+
+  @Test
+  fun doesNotLetPoorAccuracyFixesKeepStaleGpsAccelerationFresh() {
+    val analyzer = TripAnalyzer(null, "poor-fixes", 0.0, DeviceInfo(platform = "android", model = "test"))
+    analyzer.pushLocation(loc(0.0, 10.0))
+    analyzer.pushLocation(loc(1_000.0, 14.0))
+    var t = 1_100.0
+    while (t <= 31_000.0) {
+      analyzer.pushImu(restImu(t))
+      if (t % 1_000.0 == 0.0) {
+        // Worse than maxLocationAccuracyM, so it never becomes the last good location.
+        analyzer.pushLocation(loc(t, 14.0).copy(accuracyM = 100.0))
+      }
+      t += 100.0
+    }
+
+    assertEquals(1, analyzer.getEvents().count { it.type == EVENT_HARSH_ACCEL })
+  }
+
+  @Test
+  fun doesNotTreatGravityAsJerkWithoutLinearOrGravityVectors() {
+    val analyzer = TripAnalyzer(null, "raw-gravity", 0.0, DeviceInfo(platform = "android", model = "test"))
+    var t = 0.0
+    while (t <= 7_000.0) {
+      analyzer.pushImu(ImuSample(t = t, accel = gravityUp))
+      t += 100.0
+    }
+
+    assertFalse(analyzer.getEvents().any { it.type == EVENT_JERK })
+  }
+
+  @Test
+  fun stillFlagsJerkFromARawAccelerometerWhenMotionExceedsGravity() {
+    val analyzer = TripAnalyzer(null, "raw-jerk", 0.0, DeviceInfo(platform = "android", model = "test"))
+
+    // 14 m/s² in total: 4 m/s² over gravity, under the impact floor.
+    val push = analyzer.pushImu(ImuSample(t = 2_000.0, accel = Vec3(0.0, 10.0, 9.81)))
+
+    assertTrue(push.newEvents.any { it.type == EVENT_JERK })
+  }
+
+  @Test
+  fun scalesEventPointsByTheConfiguredScoreWeight() {
+    fun withBrakeWeight(weight: Double) = DetectorConfig(score = DetectorScoreWeights(harshBrake = weight))
+    val light = DrivingEvent(
+      id = "brake",
+      type = EVENT_HARSH_BRAKE,
+      t = 0.0,
+      peak = 5.0,
+      severity = 1.0,
+      level = "light",
+      lat = null,
+      lon = null,
+      speedMps = 10.0,
+    )
+    val accel = DrivingEvent(
+      id = "accel",
+      type = EVENT_HARSH_ACCEL,
+      t = 0.0,
+      peak = 5.0,
+      severity = 1.0,
+      level = "light",
+      lat = null,
+      lon = null,
+      speedMps = 10.0,
+    )
+
+    assertEquals(0.0, eventScorePoints(light, withBrakeWeight(0.0), 1_000.0), 0.0)
+    assertEquals(-16.0, eventScorePoints(light, withBrakeWeight(16.0), 1_000.0), 0.0)
+    assertEquals(-8.0, eventScorePoints(light, DetectorConfig.DEFAULT, 1_000.0), 0.0)
+    assertEquals(-5.0, eventScorePoints(accel, withBrakeWeight(0.0), 1_000.0), 0.0)
   }
 }

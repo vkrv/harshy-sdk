@@ -1,7 +1,7 @@
 import Foundation
 
 /** Monotonic SDK stamp on SessionExport. Bump with every intentional SDK change. */
-public let harshySdkVersion = 13
+public let harshySdkVersion = 14
 
 public let harshyScorePenaltyX = 1.0 / 2.0
 public let harshyScoreMax = 100.0
@@ -46,6 +46,13 @@ public let harshySmoothCreditWeight = 1.6
 
 /** Path-only harsh corners need same-sign lateral held this long with a real turn. */
 public let harshyHarshCornerHoldMs = 1000.0
+
+/// GPS-derived acceleration, braking, cornering and yaw describe the latest fix window. After this
+/// long without a fix they no longer describe current motion and are not evaluated.
+public let harshyGpsMotionMaxAgeMs = 2500.0
+
+/// Standard gravity, removed from raw accelerometer magnitude when the sample carries no linear or gravity vector.
+public let harshyStandardGravityMps2 = 9.80665
 public let harshyHarshCornerHoldMinM = 8.0
 public let harshyHarshCornerMinTurnDeg = 20.0
 

@@ -15,6 +15,8 @@ import {
 } from "./brake.js";
 import { tagCompoundOverlaps } from "./compound.js";
 import {
+  DEFAULT_DETECTOR_CONFIG,
+  GPS_MOTION_MAX_AGE_MS,
   mergeDetectorConfig,
   HARSH_CORNER_HOLD_MIN_M,
   HARSH_CORNER_HOLD_MS,
@@ -34,6 +36,7 @@ import {
   SMOOTH_GAP_M,
   SMOOTH_HOLD_MIN_M,
   SMOOTH_HOLD_MS,
+  STANDARD_GRAVITY_MPS2,
   relativeScore,
 } from "./config.js";
 import { MIN_SPAN_MS, OVER_MARGIN_MPS } from "./roadSpeed.js";
@@ -190,6 +193,8 @@ type AnalyzerState = {
   longitudinalAccelMps2: number | null;
   lateralAccelMps2: number | null;
   yawRateRadps: number | null;
+  /** Fix time of the GPS window behind the acceleration, braking, cornering and yaw values. */
+  gpsMotionAtT: number | null;
   /** Prior GPS-window yaw for swerve onset (jerk). */
   prevYawRateRadps: number | null;
   prevYawAtT: number | null;
@@ -734,7 +739,10 @@ function detectFromMotion(
     emitted.push(speeding);
   }
 
-  const longAccel = state.longitudinalAccelMps2;
+  // IMU ticks between fixes reuse the last GPS window; once it is stale it no longer describes motion.
+  const gpsFresh = state.gpsMotionAtT != null && t - state.gpsMotionAtT <= GPS_MOTION_MAX_AGE_MS;
+  const longAccel = gpsFresh ? state.longitudinalAccelMps2 : null;
+  const latAccel = gpsFresh ? state.lateralAccelMps2 : null;
   if (moving && longAccel != null && longAccel >= state.config.harshAccelMps2) {
     const event = maybeEmit(
       state,
@@ -749,6 +757,7 @@ function detectFromMotion(
       emitted.push(event);
     }
   } else if (
+    gpsFresh &&
     gpsHarshBrakeQualifies(state.gpsBrake, state.config.minSpeedMps, state.config.harshBrakeMps2)
   ) {
     const event = maybeEmit(
@@ -784,17 +793,15 @@ function detectFromMotion(
   }
 
   const cornering =
-    moving &&
-    state.lateralAccelMps2 != null &&
-    Math.abs(state.lateralAccelMps2) >= state.config.harshCornerMps2;
-  if (cornering && state.lateralAccelMps2 != null) {
+    moving && latAccel != null && Math.abs(latAccel) >= state.config.harshCornerMps2;
+  if (cornering && latAccel != null) {
     const event = state.pathOnlyLateral
       ? resolvePathOnlyHarshCorner(state, t, location, speed)
       : maybeEmit(
           state,
           "harsh_corner",
           t,
-          Math.abs(state.lateralAccelMps2),
+          Math.abs(latAccel),
           state.config.harshCornerMps2,
           location,
           speed,
@@ -805,12 +812,13 @@ function detectFromMotion(
     if (event) {
       emitted.push(event);
     }
-  } else {
+  } else if (gpsFresh) {
     state.harshCornerHold = null;
   }
 
-  const yaw = state.yawRateRadps;
-  const swervePeak = resolveSwervePeak(state, t, speed, cornering, yaw);
+  const swervePeak = gpsFresh
+    ? resolveSwervePeak(state, t, speed, cornering, state.yawRateRadps)
+    : null;
   if (swervePeak != null) {
     const event = maybeEmit(
       state,
@@ -830,11 +838,7 @@ function detectFromMotion(
     location == null ||
     location.accuracyM == null ||
     location.accuracyM > state.config.maxLocationAccuracyM;
-  const imuMag = state.lastImu?.linearAccel
-    ? magnitude(state.lastImu.linearAccel)
-    : state.lastImu
-      ? magnitude(state.lastImu.accel)
-      : null;
+  const imuMag = state.lastImu ? motionAccelMagnitude(state.lastImu) : null;
   const jerkSettled = t - state.startedAtMs >= state.config.jerkSettleMs;
   const impactQuiet =
     state.impactPulse == null &&
@@ -1494,6 +1498,10 @@ export function tripScoreFields(
   };
 }
 
+function smoothPoints(peak: number | undefined): number {
+  return (peak ?? SMOOTH_FLOOR_MPS2) < SMOOTH_FLOOR_MPS2 ? 1 : 2;
+}
+
 function harshBandPoints(
   level: HarshEventLevel | undefined,
   light: number,
@@ -1510,8 +1518,27 @@ function harshBandPoints(
 }
 
 /**
- * Fixed points for one event. Distance, time, and severity do not change them.
- * Overlaps do not add a further amount.
+ * Acceleration magnitude without gravity: the linear sensor, else accelerometer minus the gravity
+ * vector, else the raw magnitude minus standard gravity.
+ */
+function motionAccelMagnitude(sample: ImuSample): number {
+  if (sample.linearAccel || sample.gravity) {
+    return magnitude(sampleLinearAccel(sample));
+  }
+  return Math.abs(magnitude(sample.accel) - STANDARD_GRAVITY_MPS2);
+}
+
+/** Scales a fixed point band by the configured weight relative to its default, so defaults keep the bands. */
+function weighted(points: number, weight: number, defaultWeight: number): number {
+  if (weight === 0 || defaultWeight === 0) {
+    return 0;
+  }
+  return (points * weight) / defaultWeight;
+}
+
+/**
+ * Points for one event: fixed bands scaled by the event's `score` weight relative to its default.
+ * Distance, time, and severity do not change them. Overlaps do not add a further amount.
  */
 export function eventScorePoints(
   event: Pick<DrivingEvent, "type"> & {
@@ -1523,7 +1550,8 @@ export function eventScorePoints(
   config: DetectorConfig,
   distanceM: number,
 ): number {
-  void config;
+  const weights = config.score;
+  const defaults = DEFAULT_DETECTOR_CONFIG.score;
   void distanceM;
   void event.severity;
   void event.overlaps;
@@ -1540,20 +1568,21 @@ export function eventScorePoints(
       return 1;
     }
     case "smooth_accel":
+      return weighted(smoothPoints(event.peak), weights.smoothAccel, defaults.smoothAccel);
     case "smooth_brake":
-      return (event.peak ?? SMOOTH_FLOOR_MPS2) < SMOOTH_FLOOR_MPS2 ? 1 : 2;
+      return weighted(smoothPoints(event.peak), weights.smoothBrake, defaults.smoothBrake);
     case "smooth_corner":
-      return 2;
+      return weighted(2, weights.smoothCorner, defaults.smoothCorner);
     case "harsh_accel":
-      return harshBandPoints(event.level, -5, -8, -12);
+      return weighted(harshBandPoints(event.level, -5, -8, -12), weights.harshAccel, defaults.harshAccel);
     case "harsh_brake":
-      return harshBandPoints(event.level, -8, -12, -16);
+      return weighted(harshBandPoints(event.level, -8, -12, -16), weights.harshBrake, defaults.harshBrake);
     case "harsh_corner":
-      return harshBandPoints(event.level, -4, -8, -12);
+      return weighted(harshBandPoints(event.level, -4, -8, -12), weights.harshCorner, defaults.harshCorner);
     case "swerve":
-      return harshBandPoints(event.level, -4, -7, -10);
+      return weighted(harshBandPoints(event.level, -4, -7, -10), weights.swerve, defaults.swerve);
     case "jerk":
-      return harshBandPoints(event.level, -3, -5, -6);
+      return weighted(harshBandPoints(event.level, -3, -5, -6), weights.jerk, defaults.jerk);
     default:
       return 0;
   }
@@ -1648,6 +1677,7 @@ export function createTripAnalyzer(
     pendingImpact: null,
     longitudinalAccelMps2: null,
     lateralAccelMps2: null,
+    gpsMotionAtT: null,
     gpsBrake: {
       longitudinal: null,
       entrySpeedMps: null,
@@ -1722,6 +1752,7 @@ export function createTripAnalyzer(
     state.longitudinalAccelMps2 = accel.longitudinal;
     state.lateralAccelMps2 = accel.lateral;
     state.yawRateRadps = accel.yawRateRadps;
+    state.gpsMotionAtT = state.lastGoodLocation?.t ?? null;
     state.pathOnlyLateral = accel.pathOnlyLateral;
     state.gpsBrake = {
       longitudinal: accel.longitudinal,

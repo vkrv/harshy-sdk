@@ -19,10 +19,18 @@ public struct HarshyClock {
 
   public func nowMs() -> Int64 { read() }
 
-  /// Epoch milliseconds that advance with the boot clock, including time the device sleeps.
+  /// Epoch milliseconds that advance with `ContinuousClock`, which keeps counting while the device sleeps (like
+  /// Android's `elapsedRealtime`; `SuspendingClock` stops, so `t` would fall behind the wall clock).
   /// The epoch offset is fixed at creation.
   public static func monotonic() -> HarshyClock {
-    monotonic(elapsedRealtimeMs: harshyElapsedRealtimeMs, wallClockMs: harshyWallClockMs)
+    let clock = ContinuousClock()
+    let origin = clock.now
+    return monotonic(elapsedRealtimeMs: { milliseconds(of: origin.duration(to: clock.now)) }, wallClockMs: harshyWallClockMs)
+  }
+
+  static func milliseconds(of duration: Duration) -> Int64 {
+    let parts = duration.components
+    return parts.seconds * 1_000 + parts.attoseconds / 1_000_000_000_000_000
   }
 
   static func monotonic(
@@ -32,12 +40,6 @@ public struct HarshyClock {
     let epochOffsetMs = wallClockMs() - elapsedRealtimeMs()
     return HarshyClock { epochOffsetMs + elapsedRealtimeMs() }
   }
-}
-
-/// `CLOCK_MONOTONIC_RAW` keeps counting while the device sleeps, like Android's `elapsedRealtime`.
-/// Not `CLOCK_UPTIME_RAW`: it stops while the device sleeps, so `t` would fall behind the wall clock.
-private func harshyElapsedRealtimeMs() -> Int64 {
-  Int64(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW) / 1_000_000)
 }
 
 private func harshyWallClockMs() -> Int64 {

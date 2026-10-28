@@ -109,6 +109,20 @@ function mountedImu(
   };
 }
 
+/** A phone at rest: gravity only. Without `linear`, it has no linear or gravity vector, like a raw accelerometer. */
+function stillImu(t: number, { linear }: { linear: boolean }): ImuSample {
+  return {
+    t,
+    accel: { x: 0, y: 0, z: 9.81 },
+    linearAccel: linear ? { x: 0, y: 0, z: 0 } : null,
+    gyro: null,
+    magnetometer: null,
+    attitude: null,
+    gravity: linear ? { x: 0, y: 0, z: 9.81 } : null,
+    barometerHpa: null,
+  };
+}
+
 function imuSpike(t: number, mag = 8): ImuSample {
   return {
     t,
@@ -689,6 +703,32 @@ describe("detector", () => {
     expect(analyzer.getEvents().some((event) => event.type === "harsh_corner")).toBe(true);
   });
 
+  it("still scores a sustained path-only turn when fixes are 3 s apart with IMU between them", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "path-arc-sparse",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    let lat = 59.4;
+    let lon = 24.8;
+    const speed = 10;
+    let heading = 0;
+    analyzer.pushLocation({ ...placed(0, speed, null, lat, lon), courseDeg: null, accuracyM: 5 });
+    for (let step = 1; step <= 6; step += 1) {
+      for (let t = (step - 1) * 3000 + 100; t < step * 3000; t += 100) {
+        analyzer.pushImu(stillImu(t, { linear: true }));
+      }
+      // ~25°/s path turn at 10 m/s → lateral ≈ 4.4 m/s² (above harsh 3).
+      heading += 75;
+      const next = destination(lat, lon, heading, speed * 3);
+      lat = next.lat;
+      lon = next.lon;
+      analyzer.pushLocation({ ...placed(step * 3000, speed, null, lat, lon), courseDeg: null, accuracyM: 5 });
+    }
+
+    expect(analyzer.getEvents().some((event) => event.type === "harsh_corner")).toBe(true);
+  });
+
   it("credits a smooth corner when the track turns gently the same way", () => {
     const analyzer = createTripAnalyzer(undefined, {
       sessionId: "gentle-arc",
@@ -973,6 +1013,19 @@ describe("detector", () => {
     expect(analyzer.getEvents().some((event) => event.type === "smooth_accel")).toBe(false);
   });
 
+  it("scales event points by the configured score weight", () => {
+    const withBrakeWeight = (harshBrake: number) => ({
+      ...DEFAULT_DETECTOR_CONFIG,
+      score: { ...DEFAULT_DETECTOR_CONFIG.score, harshBrake },
+    });
+    const light = { ...brake, level: "light" as const };
+
+    expect(eventScorePoints(light, withBrakeWeight(0), 1_000)).toBe(0);
+    expect(eventScorePoints(light, withBrakeWeight(16), 1_000)).toBe(-16);
+    expect(eventScorePoints(light, withBrakeWeight(DEFAULT_DETECTOR_CONFIG.score.harshBrake), 1_000)).toBe(-8);
+    expect(eventScorePoints({ ...light, type: "harsh_accel" }, withBrakeWeight(0), 1_000)).toBe(-5);
+  });
+
   it("ignores distance and duration when scoring the same events", () => {
     const events = [brake, { ...brake, id: "km", type: "smooth_km" as const, peak: 3, level: "light" as const }];
     const farQuick = scoreEvents(events, DEFAULT_DETECTOR_CONFIG, {
@@ -1058,6 +1111,65 @@ describe("detector", () => {
 
     const later = analyzer.pushImu(imuSpike(2600));
     expect(later.newEvents.some((event) => event.type === "jerk")).toBe(true);
+  });
+
+  it("stops scoring GPS acceleration once no fresh fix arrives", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "stale-gps",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    analyzer.pushLocation(loc(0, 10));
+    analyzer.pushLocation(loc(1000, 14));
+    for (let t = 1100; t <= 31_000; t += 100) {
+      analyzer.pushImu(stillImu(t, { linear: true }));
+    }
+
+    expect(analyzer.getEvents().filter((event) => event.type === "harsh_accel")).toHaveLength(1);
+  });
+
+  it("does not let poor-accuracy fixes keep stale GPS acceleration fresh", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "poor-fixes",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    analyzer.pushLocation(loc(0, 10));
+    analyzer.pushLocation(loc(1000, 14));
+    for (let t = 1100; t <= 31_000; t += 100) {
+      analyzer.pushImu(stillImu(t, { linear: true }));
+      if (t % 1000 === 0) {
+        // Worse than maxLocationAccuracyM, so it never becomes the last good location.
+        analyzer.pushLocation({ ...loc(t, 14), accuracyM: 100 });
+      }
+    }
+
+    expect(analyzer.getEvents().filter((event) => event.type === "harsh_accel")).toHaveLength(1);
+  });
+
+  it("does not treat gravity as jerk when the IMU has no linear or gravity vector", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "raw-gravity",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    for (let t = 0; t <= 7000; t += 100) {
+      analyzer.pushImu(stillImu(t, { linear: false }));
+    }
+
+    expect(analyzer.getEvents().some((event) => event.type === "jerk")).toBe(false);
+  });
+
+  it("still flags jerk from a raw accelerometer when motion exceeds gravity", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "raw-jerk",
+      startedAtMs: 0,
+      device: { platform: "web", model: "test" },
+    });
+    // 14 m/s² in total: 4 m/s² over gravity, under the impact floor.
+    const jolt: ImuSample = { ...stillImu(2000, { linear: false }), accel: { x: 0, y: 10, z: 9.81 } };
+
+    expect(analyzer.pushImu(jolt).newEvents.some((event) => event.type === "jerk")).toBe(true);
   });
 
   it("does not record GPS teleports into the session", () => {

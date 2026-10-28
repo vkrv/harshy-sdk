@@ -70,6 +70,9 @@ class HeadlessTripRecorder(
   /** Set by [shutdown] on the recorder thread; after it nothing reaches the analyzer or listener. */
   private var finished = false
 
+  /** Set when initialization runs on the recorder thread; a shutdown queued ahead of it waits for it. */
+  private var initialized = false
+
   private var accel: FloatArray? = null
   private var linearAccel: FloatArray? = null
   private var gyro: FloatArray? = null
@@ -110,6 +113,7 @@ class HeadlessTripRecorder(
     handler = looper
     // Not `guarded`: a stop() queued right behind start() must still find an analyzer to finalize.
     looper.post {
+      initialized = true
       try {
         val startedAtMs = clock.nowMs()
         analyzer = TripAnalyzer(
@@ -122,20 +126,21 @@ class HeadlessTripRecorder(
           imuHz = capture.imuHz,
           maxImuSamples = maxImuSamples,
         )
-        val sensors = SENSORS.filter { (type, _) -> sensorManager.getDefaultSensor(type) != null }
+        // A stop() from another thread may already have arrived: then register nothing and finalize.
+        val sensors = if (stopped) emptyList() else SENSORS.filter { (type, _) -> sensorManager.getDefaultSensor(type) != null }
         sensors.forEach { (type, _) ->
           sensorManager.registerListener(sensorListener, sensorManager.getDefaultSensor(type), sensorPeriodUs, looper)
         }
         listener.onStarted(startedAtMs, sensors.map { it.second })
-        if (!stopped) {
+        if (stopped) {
+          shutdown()
+        } else {
           looper.post(tick)
         }
       } catch (error: Exception) {
         reportError(error)
-        if (!stopped) {
-          stopped = true
-          shutdown()
-        }
+        stopped = true
+        shutdown()
       }
     }
   }
@@ -157,18 +162,21 @@ class HeadlessTripRecorder(
     }
   }
 
-  /** Stops sampling, finalizes the session on the recorder thread, and ends the thread. */
+  /**
+   * Stops sampling, finalizes the session on the recorder thread, and ends the thread. Safe from any
+   * thread; ignored before [start].
+   */
   fun stop() {
-    val looper = handler ?: return
-    if (stopped) {
+    if (!started.get() || stopped) {
       return
     }
+    // Set before reading the handler: a start() still running then finalizes on its own thread.
     stopped = true
-    looper.post { shutdown() }
+    handler?.post { shutdown() }
   }
 
   private fun shutdown() {
-    if (finished) {
+    if (finished || !initialized) {
       return
     }
     finished = true

@@ -717,7 +717,7 @@ private extension CLLocation {
       "t": Date().timeIntervalSince1970 * 1000,
       "lat": coordinate.latitude,
       "lon": coordinate.longitude,
-      "altitudeM": altitude,
+      "altitudeM": verticalAccuracy >= 0 ? altitude : nil,
       "speedMps": speed >= 0 ? speed : nil,
       "courseDeg": course >= 0 ? course : nil,
       "accuracyM": horizontalAccuracy >= 0 ? horizontalAccuracy : nil,

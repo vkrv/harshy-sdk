@@ -668,6 +668,36 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertTrue(analyzer.getEvents().contains { $0.type == harshyEventHarshCorner })
   }
 
+  func testStillScoresSustainedPathOnlyTurnWhenFixesAreThreeSecondsApartWithImuBetween() {
+    let analyzer = HarshyTripAnalyzer(
+      config: nil,
+      sessionId: "path-arc-sparse",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    var lat = 59.4
+    var lon = 24.8
+    let speed = 10.0
+    var heading = 0.0
+    _ = analyzer.pushLocation(
+      HarshyLocationSample(t: 0, lat: lat, lon: lon, speedMps: speed, courseDeg: nil, accuracyM: 5)
+    )
+    for step in 1...6 {
+      for t in stride(from: Double(step - 1) * 3000 + 100, to: Double(step) * 3000, by: 100) {
+        _ = analyzer.pushImu(restImu(t))
+      }
+      heading += 75
+      let next = shift(lat, lon, bearingDeg: heading, distanceM: speed * 3)
+      lat = next.lat
+      lon = next.lon
+      _ = analyzer.pushLocation(
+        HarshyLocationSample(t: Double(step) * 3000, lat: lat, lon: lon, speedMps: speed, courseDeg: nil, accuracyM: 5)
+      )
+    }
+
+    XCTAssertTrue(analyzer.getEvents().contains { $0.type == harshyEventHarshCorner })
+  }
+
   private func mounted(
     _ t: Double,
     x: Double,
@@ -910,6 +940,106 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertTrue(analyzer.getEvents().contains { $0.type == harshyPhoneHandheldType })
     XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventHarshBrake })
   }
+  func testStopsScoringGpsAccelerationOnceNoFreshFixArrives() {
+    let analyzer = HarshyTripAnalyzer(
+      config: nil,
+      sessionId: "stale-gps",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    _ = analyzer.pushLocation(loc(0, speedMps: 10))
+    _ = analyzer.pushLocation(loc(1000, speedMps: 14))
+    for t in stride(from: 1100.0, through: 31_000.0, by: 100.0) {
+      _ = analyzer.pushImu(restImu(t))
+    }
+
+    XCTAssertEqual(analyzer.getEvents().filter { $0.type == harshyEventHarshAccel }.count, 1)
+  }
+
+  func testDoesNotLetPoorAccuracyFixesKeepStaleGpsAccelerationFresh() {
+    let analyzer = HarshyTripAnalyzer(
+      config: nil,
+      sessionId: "poor-fixes",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    _ = analyzer.pushLocation(loc(0, speedMps: 10))
+    _ = analyzer.pushLocation(loc(1000, speedMps: 14))
+    for t in stride(from: 1100.0, through: 31_000.0, by: 100.0) {
+      _ = analyzer.pushImu(restImu(t))
+      if t.truncatingRemainder(dividingBy: 1000) == 0 {
+        // Worse than maxLocationAccuracyM, so it never becomes the last good location.
+        var poor = loc(t, speedMps: 14)
+        poor.accuracyM = 100
+        _ = analyzer.pushLocation(poor)
+      }
+    }
+
+    XCTAssertEqual(analyzer.getEvents().filter { $0.type == harshyEventHarshAccel }.count, 1)
+  }
+
+  func testDoesNotTreatGravityAsJerkWithoutLinearOrGravityVectors() {
+    let analyzer = HarshyTripAnalyzer(
+      config: nil,
+      sessionId: "raw-gravity",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    for t in stride(from: 0.0, through: 7000.0, by: 100.0) {
+      _ = analyzer.pushImu(HarshyImuSample(t: t, accel: gravityUp))
+    }
+
+    XCTAssertFalse(analyzer.getEvents().contains { $0.type == harshyEventJerk })
+  }
+
+  func testStillFlagsJerkFromARawAccelerometerWhenMotionExceedsGravity() {
+    let analyzer = HarshyTripAnalyzer(
+      config: nil,
+      sessionId: "raw-jerk",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+
+    // 14 m/s² in total: 4 m/s² over gravity, under the impact floor.
+    let push = analyzer.pushImu(HarshyImuSample(t: 2000, accel: HarshyVec3(x: 0, y: 10, z: 9.81)))
+
+    XCTAssertTrue(push.newEvents.contains { $0.type == harshyEventJerk })
+  }
+
+  func testScalesEventPointsByTheConfiguredScoreWeight() {
+    func withBrakeWeight(_ weight: Double) -> HarshyDetectorConfig {
+      var config = HarshyDetectorConfig.default
+      config.score.harshBrake = weight
+      return config
+    }
+    let light = HarshyDrivingEvent(
+      id: "brake",
+      type: harshyEventHarshBrake,
+      t: 0,
+      peak: 5,
+      severity: 1,
+      level: "light",
+      lat: nil,
+      lon: nil,
+      speedMps: 10
+    )
+    let accel = HarshyDrivingEvent(
+      id: "accel",
+      type: harshyEventHarshAccel,
+      t: 0,
+      peak: 5,
+      severity: 1,
+      level: "light",
+      lat: nil,
+      lon: nil,
+      speedMps: 10
+    )
+
+    XCTAssertEqual(harshyEventScorePoints(light, config: withBrakeWeight(0), distanceM: 1000), 0)
+    XCTAssertEqual(harshyEventScorePoints(light, config: withBrakeWeight(16), distanceM: 1000), -16)
+    XCTAssertEqual(harshyEventScorePoints(light, config: .default, distanceM: 1000), -8)
+    XCTAssertEqual(harshyEventScorePoints(accel, config: withBrakeWeight(0), distanceM: 1000), -5)
+  }
 }
 
 final class HarshyTripAnalyzerBufferTests: XCTestCase {
@@ -982,4 +1112,5 @@ final class HarshyDeviceInfoTests: XCTestCase {
     XCTAssertFalse(device.model?.isEmpty ?? true)
     XCTAssertNotEqual(device.model, "iPhone")
   }
+
 }

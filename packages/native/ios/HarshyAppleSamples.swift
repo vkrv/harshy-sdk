@@ -1,8 +1,6 @@
 import CoreLocation
 import Foundation
 
-private let harshyStandardGravityMps2 = 9.80665
-
 extension CLLocation {
   /// GPS sample from a platform location. `tMs` is the capture time on the trip's `HarshyClock`, for
   /// example from `harshyCaptureMs`. It is not `timestamp` itself: GNSS time can drift from the IMU
@@ -12,7 +10,7 @@ extension CLLocation {
       t: Double(tMs),
       lat: coordinate.latitude,
       lon: coordinate.longitude,
-      altitudeM: altitude,
+      altitudeM: verticalAccuracy >= 0 ? altitude : nil,
       speedMps: speed >= 0 ? speed : nil,
       courseDeg: course >= 0 ? course : nil,
       accuracyM: horizontalAccuracy >= 0 ? horizontalAccuracy : nil,

@@ -21,6 +21,7 @@
 | React Native (peer) | 0.86.x | with Expo 57 | Do not disable New Architecture |
 | React (peer) | 19.2.3 | Expo 57 pin | |
 | Native engines | Kotlin + Swift `HarshyClient` + Expo Modules API | `packages/native` | |
+| AndroidX Core | `androidx.core:core-ktx` | **1.17.0** | Live Update APIs (`setRequestPromotedOngoing`, `setShortCriticalText`) |
 | JS SDK | `@harshy/sdk` | workspace | Plug-and-play client |
 | Analysis | `@harshy/core` | workspace | Pure TS, unit-tested |
 

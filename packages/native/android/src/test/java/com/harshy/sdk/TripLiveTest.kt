@@ -1,6 +1,7 @@
 package com.harshy.sdk
 
 import com.harshy.engine.TripLivePayload
+import com.harshy.engine.shortCriticalScore
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -67,5 +68,12 @@ class TripLiveTest {
   fun notificationLineJoinsKeyNumbers() {
     val payload = TripLivePayload("Apexmatic", "90", "40 km/h", "0:12", "0.10 km")
     assertEquals("Score 90 · 40 km/h · 0:12 · 0.10 km", payload.line())
+  }
+
+  @Test
+  fun chipTextKeepsShortScoreForStatusBar() {
+    assertEquals("90", TripLivePayload("Apexmatic", "90", "—", "0:00", "—").chipText())
+    assertEquals("—", shortCriticalScore("  "))
+    assertEquals("1234567", shortCriticalScore("123456789"))
   }
 }

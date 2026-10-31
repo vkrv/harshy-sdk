@@ -21,6 +21,16 @@ data class TripLivePayload(
   val distance: String,
 ) {
   fun line(): String = "Score $score · $speed · $duration · $distance"
+
+  /** Status-bar Live Update chip text (promoted ongoing). Max ~7 chars. */
+  fun chipText(): String = shortCriticalScore(score)
+}
+
+/** Trim score for [NotificationCompat.Builder.setShortCriticalText]. */
+fun shortCriticalScore(score: String): String {
+  val trimmed = score.trim()
+  if (trimmed.isEmpty()) return "—"
+  return if (trimmed.length <= 7) trimmed else trimmed.take(7)
 }
 
 object TripLiveDisplay {
@@ -60,20 +70,38 @@ object TripLiveDisplay {
 
   fun buildNotification(context: Context, payload: TripLivePayload): Notification {
     val label = payload.title.ifBlank { appLabel(context) }
-    return notification(context, label, payload.line())
+    return notification(
+      context,
+      label,
+      payload.line(),
+      promote = true,
+      shortCriticalText = payload.chipText(),
+    )
   }
 
   fun buildWatchNotification(context: Context, title: String): Notification {
-    return notification(context, title.ifBlank { appLabel(context) }, "Waiting for a drive")
+    return notification(
+      context,
+      title.ifBlank { appLabel(context) },
+      "Waiting for a drive",
+      promote = false,
+      shortCriticalText = null,
+    )
   }
 
   private fun appLabel(context: Context): String {
     return context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty().ifBlank { "Apexmatic" }
   }
 
-  private fun notification(context: Context, title: String, body: String): Notification {
+  private fun notification(
+    context: Context,
+    title: String,
+    body: String,
+    promote: Boolean,
+    shortCriticalText: String?,
+  ): Notification {
     ensureChannel(context)
-    return NotificationCompat.Builder(context, CHANNEL_ID)
+    val builder = NotificationCompat.Builder(context, CHANNEL_ID)
       .setContentTitle(title)
       .setContentText(body)
       .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -82,9 +110,17 @@ object TripLiveDisplay {
       .setOngoing(true)
       .setOnlyAlertOnce(true)
       .setSilent(true)
+      .setShowWhen(false)
       .setCategory(NotificationCompat.CATEGORY_NAVIGATION)
       .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-      .build()
+    if (promote) {
+      // Android 16+ Live Updates: status-bar chip + promoted shade/lock card when the OS allows.
+      builder.setRequestPromotedOngoing(true)
+      if (shortCriticalText != null) {
+        builder.setShortCriticalText(shortCriticalText)
+      }
+    }
+    return builder.build()
   }
 
   /**

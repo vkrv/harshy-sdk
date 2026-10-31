@@ -49,6 +49,7 @@ function withHarshyNative(config) {
     "android.permission.FOREGROUND_SERVICE",
     "android.permission.FOREGROUND_SERVICE_LOCATION",
     "android.permission.POST_NOTIFICATIONS",
+    "android.permission.POST_PROMOTED_NOTIFICATIONS",
     "android.permission.WAKE_LOCK",
     "android.permission.ACTIVITY_RECOGNITION",
   ]);

@@ -1,4 +1,10 @@
 export type { Attitude, DetectorConfig, DetectorScoreWeights, DeviceInfo, DrivingEvent, DrivingEventType, HarshEventLevel, HarshLevel, ImpactDirection, ImuSample, LiveMetrics, LocationSample, NativeStartOptions, PermissionResult, PermissionStatus, RecordingMode, SensorCapabilities, SessionExport, TripMetrics, TripTrigger, UploadAdapter, Vec3 } from "./types.js";
+export type { EcoProfile, EcoSample, EcoVehicleProfileId, TripEcoEstimate } from "./ecoScore.js";
+export {
+  GENERIC_CAR_ECO,
+  ecoScoreFromRatio,
+  estimateTripEco,
+} from "./ecoScore.js";
 export {
   grantedPermissions,
   isLocationGranted,

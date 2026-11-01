@@ -143,6 +143,8 @@ public struct HarshyLiveMetrics: Equatable, Sendable {
   public var durationMs: Double
   public var points: Double
   public var score: Double
+  public var ecoScore: Double? = nil
+  public var ecoRatio: Double? = nil
 }
 
 public struct HarshyTripMetrics: Equatable, Sendable {
@@ -153,6 +155,10 @@ public struct HarshyTripMetrics: Equatable, Sendable {
   public var points: Double
   public var score: Double
   public var eventCounts: [String: Int]
+  public var ecoScore: Double? = nil
+  public var ecoRatio: Double? = nil
+  public var ecoEnergy: Double? = nil
+  public var ecoOptimal: Double? = nil
 }
 
 public struct HarshyClientState: Equatable, Sendable {

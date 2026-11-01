@@ -1051,6 +1051,7 @@ class TripAnalyzer(
     val levels = liveHarshLevels(moving, longitudinalAccelMps2, lateralAccelMps2, swerveYaw, config)
     val last = lastImu
     val points = scoreEvents(events, config, distanceM, durationMs)
+    val eco = estimateTripEco(location.toList(), distanceM)
     return LiveMetrics(
       t = t,
       speedMps = speedMps,
@@ -1072,6 +1073,8 @@ class TripAnalyzer(
       durationMs = durationMs,
       points = points,
       score = relativeScore(points, distanceM, config.score.refDistanceKm, config.score.minDistanceKm),
+      ecoScore = eco.ecoScore,
+      ecoRatio = eco.ecoRatio,
     )
   }
 
@@ -1207,6 +1210,7 @@ class TripAnalyzer(
   private fun summarizeTrip(endedAtMs: Double): TripMetrics {
     val durationMs = max(0.0, endedAtMs - startedAtMs)
     val points = scoreEvents(events, config, distanceM, durationMs)
+    val eco = estimateTripEco(location.toList(), distanceM)
     return TripMetrics(
       distanceM = distanceM,
       durationMs = durationMs,
@@ -1215,6 +1219,10 @@ class TripAnalyzer(
       points = points,
       score = relativeScore(points, distanceM, config.score.refDistanceKm, config.score.minDistanceKm),
       eventCounts = eventCounts(events),
+      ecoScore = eco.ecoScore,
+      ecoRatio = eco.ecoRatio,
+      ecoEnergy = eco.ecoEnergy,
+      ecoOptimal = eco.ecoOptimal,
     )
   }
 }

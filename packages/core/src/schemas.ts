@@ -188,6 +188,11 @@ export const sessionExportSchema = z.object({
       score: z.number(),
       /** Absolute ledger. Absent on older JSON where `score` held the ledger. */
       points: z.number().optional(),
+      /** Secondary eco grade. Absent on older JSON. */
+      ecoScore: z.number().nullable().optional(),
+      ecoRatio: z.number().nullable().optional(),
+      ecoEnergy: z.number().nullable().optional(),
+      ecoOptimal: z.number().nullable().optional(),
       eventCounts: z.object({
         harsh_accel: z.number().int().nonnegative(),
         harsh_brake: z.number().int().nonnegative(),
@@ -209,6 +214,10 @@ export const sessionExportSchema = z.object({
         ...metrics,
         points,
         score: relativeScore(points, metrics.distanceM),
+        ecoScore: metrics.ecoScore ?? null,
+        ecoRatio: metrics.ecoRatio ?? null,
+        ecoEnergy: metrics.ecoEnergy ?? null,
+        ecoOptimal: metrics.ecoOptimal ?? null,
       };
     }),
   device: z.object({

@@ -82,6 +82,7 @@ import {
   type ImpactPulse,
   type PendingImpact,
 } from "./impact.js";
+import { estimateTripEco } from "./ecoScore.js";
 import { assessRoad, roadRmsForLocation } from "./road.js";
 import {
   MAX_LOCATION_SAMPLES,
@@ -1307,6 +1308,18 @@ function buildMetrics(state: AnalyzerState, t: number): LiveMetrics {
       distanceM: state.distanceM,
       durationMs,
     }),
+    ...liveEcoFields(state.location, state.distanceM),
+  };
+}
+
+function liveEcoFields(
+  location: readonly LocationSample[],
+  distanceM: number,
+): Pick<LiveMetrics, "ecoScore" | "ecoRatio"> {
+  const eco = estimateTripEco(location, { distanceM });
+  return {
+    ecoScore: eco.ecoScore,
+    ecoRatio: eco.ecoRatio,
   };
 }
 
@@ -1578,7 +1591,9 @@ export function summarizeTrip(state: {
   speedSum: number;
   speedCount: number;
   config: DetectorConfig;
+  location?: readonly LocationSample[];
 }): TripMetrics {
+  const eco = estimateTripEco(state.location ?? [], { distanceM: state.distanceM });
   return {
     distanceM: state.distanceM,
     durationMs: Math.max(0, state.endedAtMs - state.startedAtMs),
@@ -1588,6 +1603,10 @@ export function summarizeTrip(state: {
       distanceM: state.distanceM,
       durationMs: Math.max(0, state.endedAtMs - state.startedAtMs),
     }),
+    ecoScore: eco.ecoScore,
+    ecoRatio: eco.ecoRatio,
+    ecoEnergy: eco.ecoEnergy,
+    ecoOptimal: eco.ecoOptimal,
     eventCounts: eventCounts(state.events),
   };
 }
@@ -1836,6 +1855,7 @@ export function createTripAnalyzer(
           speedSum: state.speedSum,
           speedCount: state.speedCount,
           config: state.config,
+          location: state.location,
         }),
         device: state.device,
         trigger: state.trigger,

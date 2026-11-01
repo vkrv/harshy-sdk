@@ -203,6 +203,10 @@ private fun TripMetrics.toJsonObject(): JSONObject {
   json.put("avgSpeedMps", avgSpeedMps ?: JSONObject.NULL)
   json.put("points", points)
   json.put("score", score)
+  json.put("ecoScore", ecoScore ?: JSONObject.NULL)
+  json.put("ecoRatio", ecoRatio ?: JSONObject.NULL)
+  json.put("ecoEnergy", ecoEnergy ?: JSONObject.NULL)
+  json.put("ecoOptimal", ecoOptimal ?: JSONObject.NULL)
   json.put("eventCounts", counts)
   return json
 }

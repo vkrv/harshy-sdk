@@ -1092,6 +1092,7 @@ public final class HarshyTripAnalyzer {
     )
     let last = lastImu
     let points = harshyScoreEvents(events, config: config, distanceM: distanceM, durationMs: durationMs)
+    let eco = harshyEstimateTripEco(location, distanceM: distanceM)
     return HarshyLiveMetrics(
       t: t,
       speedMps: speedMps,
@@ -1117,7 +1118,9 @@ public final class HarshyTripAnalyzer {
         distanceM: distanceM,
         refDistanceKm: config.score.refDistanceKm,
         minDistanceKm: config.score.minDistanceKm
-      )
+      ),
+      ecoScore: eco.ecoScore,
+      ecoRatio: eco.ecoRatio
     )
   }
 
@@ -1255,6 +1258,7 @@ public final class HarshyTripAnalyzer {
   private func summarizeTrip(_ endedAtMs: Double) -> HarshyTripMetrics {
     let durationMs = max(0, endedAtMs - startedAtMs)
     let points = harshyScoreEvents(events, config: config, distanceM: distanceM, durationMs: durationMs)
+    let eco = harshyEstimateTripEco(location, distanceM: distanceM)
     return HarshyTripMetrics(
       distanceM: distanceM,
       durationMs: durationMs,
@@ -1267,7 +1271,11 @@ public final class HarshyTripAnalyzer {
         refDistanceKm: config.score.refDistanceKm,
         minDistanceKm: config.score.minDistanceKm
       ),
-      eventCounts: harshyEventCounts(events)
+      eventCounts: harshyEventCounts(events),
+      ecoScore: eco.ecoScore,
+      ecoRatio: eco.ecoRatio,
+      ecoEnergy: eco.ecoEnergy,
+      ecoOptimal: eco.ecoOptimal
     )
   }
 }

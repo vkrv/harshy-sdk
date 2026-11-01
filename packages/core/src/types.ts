@@ -105,6 +105,13 @@ export type LiveMetrics = {
   points: number;
   /** Relative 0–100 grade: `clamp(100 + points, 0, 100)`. */
   score: number;
+  /**
+   * Secondary fuel-economy grade (0–100). Null until enough path.
+   * Independent of `score` / `points`.
+   */
+  ecoScore?: number | null;
+  /** estimatedEnergy / optimalEnergy. Null when `ecoScore` is null. */
+  ecoRatio?: number | null;
 };
 
 export type DetectorScoreWeights = {
@@ -253,6 +260,17 @@ export type TripMetrics = {
   points: number;
   /** Relative 0–100 grade: `clamp(100 + points, 0, 100)`. */
   score: number;
+  /**
+   * Secondary fuel-economy grade (0–100). Null / omitted on short or older trips.
+   * Independent of `score` / `points`.
+   */
+  ecoScore?: number | null;
+  /** estimatedEnergy / optimalEnergy. Null when `ecoScore` is null. */
+  ecoRatio?: number | null;
+  /** Relative energy estimate (generic-car units). Calibration only. */
+  ecoEnergy?: number | null;
+  /** Optimal relative energy for the same distance. Calibration only. */
+  ecoOptimal?: number | null;
   eventCounts: Record<DrivingEventType, number>;
 };
 

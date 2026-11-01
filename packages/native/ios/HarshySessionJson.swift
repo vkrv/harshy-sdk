@@ -200,6 +200,10 @@ extension HarshyTripMetrics {
       "avgSpeedMps": avgSpeedMps ?? NSNull(),
       "points": points,
       "score": score,
+      "ecoScore": ecoScore ?? NSNull(),
+      "ecoRatio": ecoRatio ?? NSNull(),
+      "ecoEnergy": ecoEnergy ?? NSNull(),
+      "ecoOptimal": ecoOptimal ?? NSNull(),
       "eventCounts": eventCounts,
     ]
   }

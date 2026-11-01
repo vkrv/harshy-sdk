@@ -62,6 +62,8 @@ data class LiveMetrics(
   val durationMs: Double,
   val points: Double,
   val score: Double,
+  val ecoScore: Double? = null,
+  val ecoRatio: Double? = null,
 )
 
 data class TripMetrics(
@@ -72,6 +74,10 @@ data class TripMetrics(
   val points: Double,
   val score: Double,
   val eventCounts: Map<String, Int>,
+  val ecoScore: Double? = null,
+  val ecoRatio: Double? = null,
+  val ecoEnergy: Double? = null,
+  val ecoOptimal: Double? = null,
 )
 
 data class SessionExport(

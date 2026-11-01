@@ -321,6 +321,8 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
             t: fix.t,
             lat: fix.lat,
             lon: fix.lon,
+            altitudeM: null,
+            altitudeAccuracyM: null,
             speedMps: fix.speedMps,
             accuracyM: fix.accuracyM,
             courseDeg: null,

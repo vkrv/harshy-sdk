@@ -22,8 +22,12 @@ export const ROAD_TILE_M = 2_000;
 const TILE_M = ROAD_TILE_M;
 
 const METERS_PER_DEG_LAT = 111_320;
-/** How close to a tile edge (along the heading) before the next tile is prefetched. */
+/** Minimum lookahead along heading when speed is low or unknown. */
 export const ROAD_TILE_LEAD_M = 400;
+/** Prefetch horizon in seconds × GPS speed (capped by lead math). */
+export const ROAD_TILE_PREFETCH_HORIZON_S = 60;
+/** Above this speed, prefetch two tiles ahead instead of one. */
+export const ROAD_TILE_FAST_MPS = 20;
 
 export type SpeedFix = {
   t: number;
@@ -545,20 +549,57 @@ export function roadTileBox(lat: number, lon: number): OverpassBBox {
   return box;
 }
 
-/** Tile in front of the car when the fix is within `leadM` of that edge. */
+/**
+ * How far along the heading to probe for the next tile(s).
+ * At highway speed this is about a minute of travel, not a fixed 400 m.
+ */
+export function roadTileLeadM(speedMps: number | null | undefined): number {
+  const speed = speedMps != null && Number.isFinite(speedMps) && speedMps > 0 ? speedMps : 0;
+  return Math.max(ROAD_TILE_LEAD_M, speed * ROAD_TILE_PREFETCH_HORIZON_S);
+}
+
+/** How many distinct tiles ahead to request for this speed. */
+export function roadTileAheadCount(speedMps: number | null | undefined): number {
+  const speed = speedMps != null && Number.isFinite(speedMps) ? speedMps : 0;
+  return speed >= ROAD_TILE_FAST_MPS ? 2 : 1;
+}
+
+/**
+ * Distinct tiles along the heading within `leadM`, up to `maxTiles`.
+ * Empty when course is missing — callers should pass a path-derived course.
+ */
+export function roadTilesAhead(
+  lat: number,
+  lon: number,
+  courseDeg: number | null,
+  leadM = ROAD_TILE_LEAD_M,
+  maxTiles = 1,
+): string[] {
+  if (courseDeg == null || !Number.isFinite(courseDeg) || !(leadM > 0) || maxTiles < 1) {
+    return [];
+  }
+  const here = roadTileKey(lat, lon);
+  const keys: string[] = [];
+  const rad = (courseDeg * Math.PI) / 180;
+  const cos = Math.cos((lat * Math.PI) / 180) || 1;
+  const step = Math.min(ROAD_TILE_M / 2, leadM);
+  for (let dist = step; dist <= leadM + 1e-6 && keys.length < maxTiles; dist += step) {
+    const lat2 = lat + (dist * Math.cos(rad)) / METERS_PER_DEG_LAT;
+    const lon2 = lon + (dist * Math.sin(rad)) / (METERS_PER_DEG_LAT * cos);
+    const next = roadTileKey(lat2, lon2);
+    if (next !== here && !keys.includes(next)) {
+      keys.push(next);
+    }
+  }
+  return keys;
+}
+
+/** First tile in front of the car within `leadM`, or null. */
 export function roadTileAhead(
   lat: number,
   lon: number,
   courseDeg: number | null,
   leadM = ROAD_TILE_LEAD_M,
 ): string | null {
-  if (courseDeg == null || !Number.isFinite(courseDeg) || !(leadM > 0)) {
-    return null;
-  }
-  const rad = (courseDeg * Math.PI) / 180;
-  const cos = Math.cos((lat * Math.PI) / 180) || 1;
-  const lat2 = lat + (leadM * Math.cos(rad)) / METERS_PER_DEG_LAT;
-  const lon2 = lon + (leadM * Math.sin(rad)) / (METERS_PER_DEG_LAT * cos);
-  const next = roadTileKey(lat2, lon2);
-  return next === roadTileKey(lat, lon) ? null : next;
+  return roadTilesAhead(lat, lon, courseDeg, leadM, 1)[0] ?? null;
 }

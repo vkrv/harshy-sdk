@@ -314,6 +314,18 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
           return;
         }
         lastWatchFix = fix;
+        // Warm speed-limit tiles while Auto is watching so the first minutes
+        // of a trip are not waiting on a cold Overpass queue.
+        if (fix.lat != null && fix.lon != null) {
+          deps.speedLimitLookup?.lookup({
+            t: fix.t,
+            lat: fix.lat,
+            lon: fix.lon,
+            speedMps: fix.speedMps,
+            accuracyM: fix.accuracyM,
+            courseDeg: null,
+          });
+        }
         const decided = shouldStartTrip(startHeuristic, fix, heuristicConfig);
         startHeuristic = decided.state;
         emitWatchState();

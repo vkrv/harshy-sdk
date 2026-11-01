@@ -8,8 +8,11 @@ import {
   overpassQuery,
   parseMaxspeedKmh,
   roadTileAhead,
+  roadTileAheadCount,
   roadTileBox,
   roadTileKey,
+  roadTileLeadM,
+  roadTilesAhead,
   segmentsFromOverpass,
   tripHasRecordedSpeeding,
   type RoadSegment,
@@ -233,5 +236,20 @@ describe("road speed", () => {
     const leap = roadTileAhead(lat, lon, 90, 20_000);
     expect(leap).not.toBeNull();
     expect(leap).not.toBe(here);
+  });
+
+  it("scales prefetch lead with speed and asks for two tiles when fast", () => {
+    expect(roadTileLeadM(null)).toBe(400);
+    expect(roadTileLeadM(5)).toBe(400);
+    expect(roadTileLeadM(30)).toBe(1_800);
+    expect(roadTileAheadCount(10)).toBe(1);
+    expect(roadTileAheadCount(20)).toBe(2);
+    const lat = 32.085;
+    const lon = 34.782;
+    const here = roadTileKey(lat, lon);
+    const ahead = roadTilesAhead(lat, lon, 90, 20_000, 2);
+    expect(ahead.length).toBeGreaterThanOrEqual(1);
+    expect(ahead[0]).not.toBe(here);
+    expect(new Set(ahead).size).toBe(ahead.length);
   });
 });

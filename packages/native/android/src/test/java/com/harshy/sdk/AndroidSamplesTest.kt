@@ -9,7 +9,8 @@ class AndroidSamplesTest {
   private fun location(withOptionalFields: Boolean): Location = object : Location("test") {
     override fun getLatitude(): Double = 59.43
     override fun getLongitude(): Double = 24.75
-    override fun getAltitude(): Double = 12.0
+    override fun hasAltitude(): Boolean = withOptionalFields
+    override fun getAltitude(): Double = if (withOptionalFields) 12.0 else 0.0
     override fun getTime(): Long = 42L
     override fun hasSpeed(): Boolean = withOptionalFields
     override fun getSpeed(): Float = 13.5f
@@ -38,6 +39,7 @@ class AndroidSamplesTest {
     assertNull(sample.speedMps)
     assertNull(sample.courseDeg)
     assertNull(sample.accuracyM)
+    assertNull(sample.altitudeM)
     // Unit tests run with Build.VERSION.SDK_INT = 0, below the API 26 vertical-accuracy check.
     assertNull(sample.altitudeAccuracyM)
   }

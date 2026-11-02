@@ -12,7 +12,7 @@ fun Location.toLocationSample(tMs: Long): LocationSample {
     t = tMs.toDouble(),
     lat = latitude,
     lon = longitude,
-    altitudeM = altitude,
+    altitudeM = if (hasAltitude()) altitude else null,
     speedMps = if (hasSpeed()) speed.toDouble() else null,
     courseDeg = if (hasBearing()) bearing.toDouble() else null,
     accuracyM = if (hasAccuracy()) accuracy.toDouble() else null,

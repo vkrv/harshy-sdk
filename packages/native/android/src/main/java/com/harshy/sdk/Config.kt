@@ -4,7 +4,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /** Monotonic SDK stamp on SessionExport. Bump with every intentional SDK change. */
-const val HARSHY_SDK_VERSION = 13
+const val HARSHY_SDK_VERSION = 14
 
 /** Event penalties and smooth credits apply at 1/2. */
 const val SCORE_PENALTY_X = 1.0 / 2.0
@@ -59,6 +59,15 @@ const val SMOOTH_CREDIT_WEIGHT = 1.6
 
 /** Path-only harsh corners need same-sign lateral held this long with a real turn. */
 const val HARSH_CORNER_HOLD_MS = 1000.0
+
+/**
+ * GPS-derived acceleration, braking, cornering and yaw describe the latest fix window. After this
+ * long without a fix they no longer describe current motion and are not evaluated.
+ */
+const val GPS_MOTION_MAX_AGE_MS = 2500.0
+
+/** Standard gravity, removed from raw accelerometer magnitude when the sample carries no linear or gravity vector. */
+const val STANDARD_GRAVITY_MPS2 = 9.80665
 const val HARSH_CORNER_HOLD_MIN_M = 8.0
 const val HARSH_CORNER_MIN_TURN_DEG = 20.0
 

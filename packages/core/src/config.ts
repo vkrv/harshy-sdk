@@ -123,6 +123,15 @@ export const SMOOTH_CORNER_MIN_TURN_DEG = 15;
  */
 export const HARSH_CORNER_HOLD_MS = 1000;
 
+/**
+ * GPS-derived acceleration, braking, cornering and yaw describe the latest fix window. After this
+ * long without a fix they no longer describe current motion and are not evaluated.
+ */
+export const GPS_MOTION_MAX_AGE_MS = 2500;
+
+/** Standard gravity, removed from raw accelerometer magnitude when the sample carries no linear or gravity vector. */
+export const STANDARD_GRAVITY_MPS2 = 9.80665;
+
 export const HARSH_CORNER_HOLD_MIN_M = 8;
 
 /** Net track heading during a path-only harsh corner hold. */

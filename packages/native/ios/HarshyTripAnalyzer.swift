@@ -44,6 +44,8 @@ public final class HarshyTripAnalyzer {
   private var pathOnlyLateral = false
   private var harshCornerHold: SmoothHold?
   private var yawRateRadps: Double?
+  /// Fix time of the GPS window behind the acceleration, braking, cornering and yaw values.
+  private var gpsMotionAtT: Double?
   private var prevYawRateRadps: Double?
   private var prevYawAtT: Double?
   private var yawJerkRadps2: Double?
@@ -170,6 +172,7 @@ public final class HarshyTripAnalyzer {
     lateralAccelMps2 = accel.lateral
     pathOnlyLateral = accel.pathOnlyLateral
     yawRateRadps = accel.yawRateRadps
+    gpsMotionAtT = lastGoodLocation?.t
     gpsBrake = HarshyGpsBrakeSample(
       longitudinal: accel.longitudinal,
       entrySpeedMps: accel.entrySpeedMps,
@@ -640,7 +643,10 @@ public final class HarshyTripAnalyzer {
     if let speeding = updateSpeedingSpan(t: t, speed: speed, loc: loc, moving: moving) {
       emitted.append(speeding)
     }
-    if moving, let longAccel = longitudinalAccelMps2, longAccel >= config.harshAccelMps2 {
+    // IMU ticks between fixes reuse the last GPS window; once it is stale it no longer describes motion.
+    let gpsFresh = gpsMotionAtT.map { t - $0 <= harshyGpsMotionMaxAgeMs } ?? false
+    let longitudinal = gpsFresh ? longitudinalAccelMps2 : nil
+    if moving, let longAccel = longitudinal, longAccel >= config.harshAccelMps2 {
       if let event = maybeEmit(
         type: harshyEventHarshAccel,
         t: t,
@@ -651,7 +657,7 @@ public final class HarshyTripAnalyzer {
       ) {
         emitted.append(event)
       }
-    } else if harshyGpsHarshBrakeQualifies(
+    } else if gpsFresh, harshyGpsHarshBrakeQualifies(
       gpsBrake,
       minSpeedMps: config.minSpeedMps,
       harshBrakeMps2: config.harshBrakeMps2
@@ -659,7 +665,7 @@ public final class HarshyTripAnalyzer {
       if let event = maybeEmit(
         type: harshyEventHarshBrake,
         t: t,
-        peak: abs(longitudinalAccelMps2 ?? 0),
+        peak: abs(longitudinal ?? 0),
         threshold: config.harshBrakeMps2,
         location: loc,
         speedMps: speed
@@ -679,7 +685,7 @@ public final class HarshyTripAnalyzer {
         emitted.append(event)
       }
     }
-    let latAccel = lateralAccelMps2
+    let latAccel = gpsFresh ? lateralAccelMps2 : nil
     let cornering = moving && latAccel != nil && abs(latAccel!) >= config.harshCornerMps2
     if cornering, let latAccel {
       let event: HarshyDrivingEvent?
@@ -701,11 +707,11 @@ public final class HarshyTripAnalyzer {
       if let event {
         emitted.append(event)
       }
-    } else {
+    } else if gpsFresh {
       harshCornerHold = nil
     }
-    let yaw = yawRateRadps
-    if let peak = resolveSwervePeak(t: t, speed: speed, cornering: cornering, yaw: yaw) {
+    let swervePeak = gpsFresh ? resolveSwervePeak(t: t, speed: speed, cornering: cornering, yaw: yawRateRadps) : nil
+    if let peak = swervePeak {
       if let event = maybeEmit(
         type: harshyEventSwerve,
         t: t,
@@ -719,7 +725,7 @@ public final class HarshyTripAnalyzer {
     }
     let gpsWeak =
       loc == nil || loc?.accuracyM == nil || (loc?.accuracyM ?? 0) > config.maxLocationAccuracyM
-    let imuMag = lastImu?.linearAccel.map(harshyMagnitude) ?? lastImu.map { harshyMagnitude($0.accel) }
+    let imuMag = lastImu.map(harshyMotionAccelMagnitude)
     let jerkSettled = t - startedAtMs >= config.jerkSettleMs
     let lastImpact = lastEventAt[harshyPossibleImpactType]
     let impactQuiet =
@@ -1304,33 +1310,63 @@ public func harshyScoreExposureScale(
   return harshyClamp(1 / max(exposure, 1e-6), harshyScoreExposureMin, harshyScoreExposureMax)
 }
 
+/// Points for one event: fixed bands scaled by the event's `score` weight relative to its default.
+/// Distance, time, and severity do not change them. Overlaps do not add a further amount.
 public func harshyEventScorePoints(
   _ event: HarshyDrivingEvent,
-  config _: HarshyDetectorConfig,
+  config: HarshyDetectorConfig,
   distanceM _: Double
 ) -> Double {
+  let weights = config.score
+  let defaults = HarshyDetectorConfig.default.score
   switch event.type {
   case harshyEventSmoothKm:
     if event.peak >= 2.5 { return 3 }
     if event.peak >= 1.5 { return 2 }
     return 1
-  case harshyEventSmoothAccel, harshyEventSmoothBrake:
-    return event.peak < harshySmoothFloorMps2 ? 1 : 2
+  case harshyEventSmoothAccel:
+    return harshyWeighted(harshySmoothPoints(event.peak), weights.smoothAccel, defaults.smoothAccel)
+  case harshyEventSmoothBrake:
+    return harshyWeighted(harshySmoothPoints(event.peak), weights.smoothBrake, defaults.smoothBrake)
   case harshyEventSmoothCorner:
-    return 2
+    return harshyWeighted(2, weights.smoothCorner, defaults.smoothCorner)
   case harshyEventHarshAccel:
-    return harshyBandPoints(event.level, light: -5, medium: -8, heavy: -12)
+    return harshyWeighted(
+      harshyBandPoints(event.level, light: -5, medium: -8, heavy: -12), weights.harshAccel, defaults.harshAccel)
   case harshyEventHarshBrake:
-    return harshyBandPoints(event.level, light: -8, medium: -12, heavy: -16)
+    return harshyWeighted(
+      harshyBandPoints(event.level, light: -8, medium: -12, heavy: -16), weights.harshBrake, defaults.harshBrake)
   case harshyEventHarshCorner:
-    return harshyBandPoints(event.level, light: -4, medium: -8, heavy: -12)
+    return harshyWeighted(
+      harshyBandPoints(event.level, light: -4, medium: -8, heavy: -12), weights.harshCorner, defaults.harshCorner)
   case harshyEventSwerve:
-    return harshyBandPoints(event.level, light: -4, medium: -7, heavy: -10)
+    return harshyWeighted(
+      harshyBandPoints(event.level, light: -4, medium: -7, heavy: -10), weights.swerve, defaults.swerve)
   case harshyEventJerk:
-    return harshyBandPoints(event.level, light: -3, medium: -5, heavy: -6)
+    return harshyWeighted(
+      harshyBandPoints(event.level, light: -3, medium: -5, heavy: -6), weights.jerk, defaults.jerk)
   default:
     return 0
   }
+}
+
+private func harshySmoothPoints(_ peak: Double) -> Double {
+  peak < harshySmoothFloorMps2 ? 1 : 2
+}
+
+/// Scales a fixed point band by the configured weight relative to its default, so defaults keep the bands.
+private func harshyWeighted(_ points: Double, _ weight: Double, _ defaultWeight: Double) -> Double {
+  if weight == 0 || defaultWeight == 0 { return 0 }
+  return points * weight / defaultWeight
+}
+
+/// Acceleration magnitude without gravity: the linear sensor, else accelerometer minus the gravity
+/// vector, else the raw magnitude minus standard gravity.
+func harshyMotionAccelMagnitude(_ sample: HarshyImuSample) -> Double {
+  if sample.linearAccel != nil || sample.gravity != nil {
+    return harshyMagnitude(harshySampleLinearAccel(sample))
+  }
+  return abs(harshyMagnitude(sample.accel) - harshyStandardGravityMps2)
 }
 
 private func harshyBandPoints(_ level: String, light: Double, medium: Double, heavy: Double) -> Double {
@@ -1399,23 +1435,6 @@ public func harshyAnalyzeTrip(
     }
   }
   return analyzer.finalize(endedAtMs: endedAtMs)
-}
-
-func harshyEventWeight(_ type: String, config: HarshyDetectorConfig) -> Double {
-  switch type {
-  case harshyEventHarshAccel: return config.score.harshAccel
-  case harshyEventHarshBrake: return config.score.harshBrake
-  case harshyEventHarshCorner: return config.score.harshCorner
-  case harshyEventSwerve: return config.score.swerve
-  case harshyEventSpeeding: return config.score.speeding
-  case harshyEventJerk: return config.score.jerk
-  case harshyPossibleImpactType: return 0
-  case harshyPhoneHandheldType: return 0
-  case harshyEventSmoothAccel: return config.score.smoothAccel
-  case harshyEventSmoothBrake: return config.score.smoothBrake
-  case harshyEventSmoothCorner: return config.score.smoothCorner
-  default: return 0
-  }
 }
 
 func harshyIsoFromEpochMs(_ ms: Double) -> String {

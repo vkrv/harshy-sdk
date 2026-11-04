@@ -52,7 +52,7 @@ Automatic trips need a third lifecycle that is **not a trip**: `disarmed` | `arm
 1. iOS: when-in-use, then a one-shot motion-activity query if that status is still not determined.
 2. Android: fine + coarse (+ notifications on 13+, `ACTIVITY_RECOGNITION` on 10+).
 
-`requestPermission(kind)` asks for one permission. `requestBackgroundLocation()` is Always / `ACCESS_BACKGROUND_LOCATION` (API 29+). The host explains that permission in the app before either call.
+`requestPermission(kind)` asks for one permission. `requestBackgroundLocation()` is Always / `ACCESS_BACKGROUND_LOCATION` (API 29+). Hosts should show a Continue-only purpose sheet then the OS prompt while status is `undetermined`, and only offer Settings after the OS was asked (Guideline 5.1.1(iv)).
 
 Do not return the pre-prompt status and start capture in the same turn. `start()` throws if `location` is not granted; it does not prompt.
 

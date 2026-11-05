@@ -115,6 +115,14 @@ public final class HarshyTripAnalyzer {
     }
 
     let anchor = location.last
+    let snapTail = anchor == nil
+      ? 0
+      : harshyStationaryAccuracySnapTailCount(location, sample, minSpeedMps: config.minSpeedMps)
+    if snapTail > 0 {
+      locationRejects = 0
+      let rebased = rebaseLocation(sample, removeCount: snapTail)
+      return HarshyAnalyzerPush(metrics: rebased.metrics, newEvents: carried + rebased.newEvents)
+    }
     let decision = harshyShouldAcceptDriveFix(
       anchor: anchor,
       sample: sample,
@@ -209,6 +217,63 @@ public final class HarshyTripAnalyzer {
     }
     let newEvents = impact.map { motion + [$0] } ?? motion
     return HarshyAnalyzerPush(metrics: buildMetrics(stored.t), newEvents: newEvents)
+  }
+
+  /// A tighter parked fix replaces the loose tail. The jump is not distance or a harsh event.
+  private func rebaseLocation(_ sample: HarshyLocationSample, removeCount: Int) -> HarshyAnalyzerPush {
+    var stored = sample
+    stored.speedMps = sample.speedMps
+    stored.courseDeg = sample.courseDeg
+    stored.roadRmsMps2 = sample.roadRmsMps2 ?? harshyRoadRmsForLocation(
+      sample: stored,
+      imu: imu,
+      startedAtMs: startedAtMs,
+      jerkSettleMs: config.jerkSettleMs,
+      minSpeedMps: config.minSpeedMps
+    )
+    let removed = Array(location.suffix(removeCount))
+    location.removeLast(removeCount)
+    let predecessor = location.last { locationUsable($0) }
+    var previous = predecessor
+    var removedDistance = 0.0
+    for point in removed {
+      if !locationUsable(point) {
+        continue
+      }
+      if let prior = previous {
+        removedDistance += harshyHaversineM(prior, point)
+      }
+      if let speed = point.speedMps, speed.isFinite {
+        speedSum -= speed
+        speedCount = max(0, speedCount - 1)
+      }
+      previous = point
+    }
+    distanceM = max(0, distanceM - removedDistance)
+    if speedCount == 0 {
+      speedSum = 0
+    }
+    location.append(stored)
+    if locationUsable(stored) {
+      lastGoodLocation = stored
+      if let speed = stored.speedMps, speed.isFinite {
+        speedSum += speed
+        speedCount += 1
+        maxSpeedMps = max(maxSpeedMps ?? speed, speed)
+      }
+    } else {
+      lastGoodLocation = predecessor
+    }
+    longitudinalAccelMps2 = nil
+    lateralAccelMps2 = nil
+    pathOnlyLateral = false
+    yawRateRadps = nil
+    gpsMotionAtT = stored.t
+    gpsBrake = HarshyGpsBrakeSample()
+    yawJerkRadps2 = nil
+    prevYawRateRadps = nil
+    prevYawAtT = nil
+    return HarshyAnalyzerPush(metrics: buildMetrics(stored.t), newEvents: [])
   }
 
   @discardableResult

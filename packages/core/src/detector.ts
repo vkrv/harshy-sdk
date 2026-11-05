@@ -46,6 +46,7 @@ import {
   lastLocationAnchor,
   shouldAcceptDriveFix,
   speedLeapHolds,
+  stationaryAccuracySnapTailCount,
 } from "./drivePath.js";
 import {
   clamp,
@@ -1787,6 +1788,86 @@ export function createTripAnalyzer(
     return { metrics: buildMetrics(state, withRoad.t), newEvents };
   };
 
+  /**
+   * A tighter parked fix replaces the loose tail. The arrow moves to the
+   * corrected coordinate; the jump is not distance, heading, or a harsh event.
+   */
+  const rebaseLocation = (sample: LocationSample, removeCount: number) => {
+    const speedMps = sample.speedMps;
+    const withRoad: LocationSample = {
+      ...sample,
+      speedMps,
+      courseDeg: sample.courseDeg,
+      roadRmsMps2:
+        sample.roadRmsMps2 ??
+        roadRmsForLocation({ ...sample, speedMps }, state.imu, {
+          startedAtMs: state.startedAtMs,
+          jerkSettleMs: state.config.jerkSettleMs,
+          minSpeedMps: state.config.minSpeedMps,
+        }),
+    };
+    const cut = state.location.length - removeCount;
+    let predecessor: LocationSample | null = null;
+    for (let index = cut - 1; index >= 0; index -= 1) {
+      const candidate = state.location[index];
+      if (candidate && locationUsable(candidate, state.config)) {
+        predecessor = candidate;
+        break;
+      }
+    }
+    const removed = state.location.splice(cut, removeCount);
+    let removedDistance = 0;
+    let previous = predecessor;
+    for (const point of removed) {
+      if (!locationUsable(point, state.config)) {
+        continue;
+      }
+      if (previous) {
+        removedDistance += haversineM(previous, point);
+      }
+      if (point.speedMps != null && Number.isFinite(point.speedMps)) {
+        state.speedSum -= point.speedMps;
+        state.speedCount = Math.max(0, state.speedCount - 1);
+      }
+      previous = point;
+    }
+    state.distanceM = Math.max(0, state.distanceM - removedDistance);
+    if (state.speedCount === 0) {
+      state.speedSum = 0;
+    }
+    state.location.push(withRoad);
+    if (locationUsable(withRoad, state.config)) {
+      state.lastGoodLocation = withRoad;
+      if (withRoad.speedMps != null && Number.isFinite(withRoad.speedMps)) {
+        state.speedSum += withRoad.speedMps;
+        state.speedCount += 1;
+        state.maxSpeedMps =
+          state.maxSpeedMps == null
+            ? withRoad.speedMps
+            : Math.max(state.maxSpeedMps, withRoad.speedMps);
+      }
+    } else {
+      state.lastGoodLocation = predecessor;
+    }
+    state.longitudinalAccelMps2 = null;
+    state.lateralAccelMps2 = null;
+    state.yawRateRadps = null;
+    state.pathOnlyLateral = false;
+    state.gpsMotionAtT = withRoad.t;
+    state.gpsBrake = {
+      longitudinal: null,
+      entrySpeedMps: null,
+      exitSpeedMps: null,
+      dtSec: null,
+      stepM: null,
+      entryPathSpeedMps: null,
+    };
+    state.yawJerkRadps2 = null;
+    state.prevYawRateRadps = null;
+    state.prevYawAtT = null;
+    return { metrics: buildMetrics(state, withRoad.t), newEvents: [] as DrivingEvent[] };
+  };
+
   const pushLocation = (sample: LocationSample) => {
     const carried: DrivingEvent[] = [];
     if (state.heldSpeedLeap) {
@@ -1799,6 +1880,18 @@ export function createTripAnalyzer(
     }
 
     const anchor = lastLocationAnchor(state.location);
+    const snapTail =
+      anchor == null
+        ? 0
+        : stationaryAccuracySnapTailCount(state.location, sample, state.config.minSpeedMps);
+    if (snapTail > 0) {
+      state.locationRejects = 0;
+      const rebased = rebaseLocation(sample, snapTail);
+      return {
+        metrics: rebased.metrics,
+        newEvents: [...carried, ...rebased.newEvents],
+      };
+    }
     const decision = shouldAcceptDriveFix(anchor, sample, state.locationRejects);
     state.locationRejects = decision.rejects;
     if (!decision.accept) {

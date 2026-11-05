@@ -32,6 +32,12 @@ let harshyDriveFixMaxStepM = 80.0
 let harshyDriveFixResetAfter = 10
 let harshyDriveFixCoarseFractionDigits = 7
 let harshyDriveFixGnssAccuracyM = 50.0
+let harshyAccuracySnapMinAnchorM = 15.0
+let harshyAccuracySnapMinImprovementM = 10.0
+let harshyAccuracySnapRatio = 0.5
+let harshyAccuracySnapMinJumpM = 3.0
+let harshyAccuracySnapMaxDtSec = 60.0
+let harshyAccuracySnapDefaultMinSpeedMps = 2.0
 /// 10 km/h. Matches core `startSpeedMps`.
 let harshyWatchVehicleSpeedMps = 10.0 / 3.6
 let harshyWatchStartDistanceM = 40.0
@@ -335,6 +341,74 @@ func harshySpeedLeapHolds(
   let back = harshyHaversineM(anchor, next)
   let onward = harshyHaversineM(leap, next)
   return out >= 1 && back > out * 0.85 && onward > out * 0.35
+}
+
+private func harshyPositiveAccuracy(_ value: Double?) -> Bool {
+  guard let value, value.isFinite, value > 0 else { return false }
+  return true
+}
+
+private func harshyStoppedSpeed(_ speedMps: Double?, minSpeedMps: Double) -> Bool {
+  guard let speedMps, speedMps.isFinite else { return true }
+  return speedMps < minSpeedMps
+}
+
+func harshyIsStationaryAccuracySnap(
+  _ anchor: HarshyLocationSample,
+  _ sample: HarshyLocationSample,
+  minSpeedMps: Double = harshyAccuracySnapDefaultMinSpeedMps
+) -> Bool {
+  guard let sampleSpeed = sample.speedMps, sampleSpeed.isFinite, sampleSpeed >= 0, sampleSpeed < minSpeedMps else {
+    return false
+  }
+  if !harshyStoppedSpeed(anchor.speedMps, minSpeedMps: minSpeedMps) {
+    return false
+  }
+  guard harshyPositiveAccuracy(anchor.accuracyM), harshyPositiveAccuracy(sample.accuracyM),
+    let anchorAccuracy = anchor.accuracyM, let sampleAccuracy = sample.accuracyM else {
+    return false
+  }
+  if anchorAccuracy < harshyAccuracySnapMinAnchorM { return false }
+  if sampleAccuracy > anchorAccuracy * harshyAccuracySnapRatio { return false }
+  if anchorAccuracy - sampleAccuracy < harshyAccuracySnapMinImprovementM { return false }
+  let dtSec = (sample.t - anchor.t) / 1000
+  if !dtSec.isFinite || dtSec < 0 || dtSec > harshyAccuracySnapMaxDtSec { return false }
+  let distance = harshyHaversineM(anchor, sample)
+  return distance > harshyAccuracySnapMinJumpM && distance <= anchorAccuracy + sampleAccuracy
+}
+
+private func harshyInAccuracySnapTail(
+  _ point: HarshyLocationSample,
+  _ sample: HarshyLocationSample,
+  minSpeedMps: Double
+) -> Bool {
+  if !harshyStoppedSpeed(point.speedMps, minSpeedMps: minSpeedMps) { return false }
+  let dtSec = (sample.t - point.t) / 1000
+  if !dtSec.isFinite || dtSec < 0 || dtSec > harshyAccuracySnapMaxDtSec { return false }
+  guard harshyPositiveAccuracy(point.accuracyM), harshyPositiveAccuracy(sample.accuracyM),
+    let pointAccuracy = point.accuracyM, let sampleAccuracy = sample.accuracyM else {
+    return false
+  }
+  if pointAccuracy < sampleAccuracy { return false }
+  return harshyHaversineM(point, sample) <= pointAccuracy + sampleAccuracy
+}
+
+func harshyStationaryAccuracySnapTailCount(
+  _ points: [HarshyLocationSample],
+  _ sample: HarshyLocationSample,
+  minSpeedMps: Double = harshyAccuracySnapDefaultMinSpeedMps
+) -> Int {
+  guard let anchor = points.last, harshyIsStationaryAccuracySnap(anchor, sample, minSpeedMps: minSpeedMps) else {
+    return 0
+  }
+  var count = 0
+  for point in points.reversed() {
+    if !harshyInAccuracySnapTail(point, sample, minSpeedMps: minSpeedMps) {
+      break
+    }
+    count += 1
+  }
+  return count
 }
 
 func harshyIsPlausibleDriveStep(_ from: HarshyLocationSample, _ to: HarshyLocationSample) -> Bool {

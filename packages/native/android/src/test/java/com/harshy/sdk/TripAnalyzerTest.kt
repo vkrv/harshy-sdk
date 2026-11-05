@@ -330,6 +330,83 @@ class TripAnalyzerTest {
     assertTrue(session.metrics.distanceM < 50.0)
   }
 
+  private fun snap(
+    t: Double,
+    lat: Double,
+    lon: Double,
+    speedMps: Double,
+    accuracyM: Double,
+  ): LocationSample {
+    return LocationSample(
+      t = t,
+      lat = lat,
+      lon = lon,
+      speedMps = speedMps,
+      courseDeg = 0.0,
+      accuracyM = accuracyM,
+    )
+  }
+
+  @Test
+  fun replacesParkedAccuracySnapInsteadOfRecordingTheJump() {
+    val analyzer = TripAnalyzer(
+      quiet,
+      "accuracy-snap",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    analyzer.pushLocation(snap(0.0, 32.0, 34.0, 0.0, 40.0))
+    analyzer.pushLocation(snap(1000.0, 32.0001978507533, 34.0, 0.0, 40.0))
+    val corrected = analyzer.pushLocation(
+      snap(2000.0, 31.999999999988972, 34.00005302303077, 0.0, 6.0),
+    )
+    val session = analyzer.finalize(3000.0)
+    assertTrue(corrected.newEvents.isEmpty())
+    assertEquals(6.0, corrected.metrics.locationAccuracyM!!, 0.0)
+    assertEquals(null, corrected.metrics.longitudinalAccelMps2)
+    assertTrue(session.events.isEmpty())
+    assertEquals(1, session.location.size)
+    assertEquals(31.999999999988972, session.location[0].lat, 1e-8)
+    assertEquals(34.00005302303077, session.location[0].lon, 1e-8)
+    assertEquals(6.0, session.location[0].accuracyM!!, 0.0)
+    assertEquals(0.0, session.metrics.distanceM, 0.001)
+  }
+
+  @Test
+  fun keepsDrivenDistanceWhenAStopTightens() {
+    val analyzer = TripAnalyzer(
+      quiet,
+      "accuracy-snap-drive",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    analyzer.pushLocation(snap(0.0, 32.0, 34.0, 12.0, 5.0))
+    analyzer.pushLocation(snap(5000.0, 32.00089932160592, 34.0, 12.0, 8.0))
+    analyzer.pushLocation(snap(6000.0, 32.00112415200739, 34.0, 0.0, 40.0))
+    analyzer.pushLocation(snap(7000.0, 32.00089932157769, 34.000084837681335, 0.0, 6.0))
+    val session = analyzer.finalize(8000.0)
+    assertEquals(3, session.location.size)
+    assertFalse(session.location.any { it.lat == 32.00112415200739 })
+    assertEquals(6.0, session.location[2].accuracyM!!, 0.0)
+    assertEquals(100.0, session.metrics.distanceM, 0.1)
+    assertTrue(session.events.isEmpty())
+  }
+
+  @Test
+  fun keepsTighteningFixThatStillReportsMoving() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig.DEFAULT,
+      "accuracy-snap-moving",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    analyzer.pushLocation(snap(0.0, 32.0, 34.0, 12.0, 40.0))
+    analyzer.pushLocation(snap(1000.0, 32.0001978507533, 34.0, 12.0, 6.0))
+    val session = analyzer.finalize(2000.0)
+    assertEquals(2, session.location.size)
+    assertTrue(session.metrics.distanceM > 20.0)
+  }
+
   @Test
   fun dropsCoarseNetworkLikeFixWithoutSpeed() {
     val analyzer = TripAnalyzer(

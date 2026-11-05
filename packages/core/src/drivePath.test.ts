@@ -4,9 +4,11 @@ import {
   compensateDrivePath,
   isCoarseNetworkLikeFix,
   isPlausibleDriveStep,
+  isStationaryAccuracySnap,
   isSuspiciousSpeedLeap,
   shouldAcceptDriveFix,
   speedLeapHolds,
+  stationaryAccuracySnapTailCount,
   type DriveFixPoint,
 } from "./drivePath.js";
 import { haversineM } from "./geo.js";
@@ -133,5 +135,36 @@ describe("drivePath", () => {
     expect(cleaned.some((p) => p.lat === 59.45)).toBe(false);
     expect(cleaned.some((p) => p.lat === 59.4395306)).toBe(false);
     expect(cleaned.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("collapses a parked accuracy snap onto the tighter fix", () => {
+    const loose: DriveFixPoint = {
+      t: 0,
+      lat: 32,
+      lon: 34,
+      speedMps: 0,
+      accuracyM: 40,
+    };
+    const wander: DriveFixPoint = {
+      t: 1_000,
+      lat: 32.0001978507533,
+      lon: 34,
+      speedMps: 0,
+      accuracyM: 40,
+    };
+    const tight: DriveFixPoint = {
+      t: 2_000,
+      lat: 31.999999999988972,
+      lon: 34.00005302303077,
+      speedMps: 0,
+      accuracyM: 6,
+    };
+    expect(isStationaryAccuracySnap(wander, tight)).toBe(true);
+    expect(stationaryAccuracySnapTailCount([loose, wander], tight)).toBe(2);
+    expect(compensateDrivePath([loose, wander, tight])).toEqual([tight]);
+    expect(isStationaryAccuracySnap(loose, { ...tight, speedMps: 12 })).toBe(false);
+    expect(isStationaryAccuracySnap({ ...loose, accuracyM: 12 }, { ...tight, accuracyM: 8 })).toBe(
+      false,
+    );
   });
 });

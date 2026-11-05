@@ -109,6 +109,19 @@ class TripAnalyzer(
     }
 
     val anchor = location.lastOrNull()
+    val snapTail = if (anchor == null) {
+      0
+    } else {
+      stationaryAccuracySnapTailCount(location, sample, config.minSpeedMps)
+    }
+    if (snapTail > 0) {
+      locationRejects = 0
+      val rebased = rebaseLocation(sample, snapTail)
+      return AnalyzerPush(
+        metrics = rebased.metrics,
+        newEvents = carried + rebased.newEvents,
+      )
+    }
     val decision = shouldAcceptDriveFix(anchor, sample, locationRejects)
     locationRejects = decision.rejects
     if (!decision.accept) {
@@ -199,6 +212,69 @@ class TripAnalyzer(
     }
     val newEvents = if (impact != null) motion + impact else motion
     return AnalyzerPush(metrics = buildMetrics(stored.t), newEvents = newEvents)
+  }
+
+  /** A tighter parked fix replaces the loose tail. The jump is not distance or a harsh event. */
+  private fun rebaseLocation(sample: LocationSample, removeCount: Int): AnalyzerPush {
+    val stored = sample.copy(
+      speedMps = sample.speedMps,
+      courseDeg = sample.courseDeg,
+      roadRmsMps2 = sample.roadRmsMps2 ?: roadRmsForLocation(
+        sample,
+        imu,
+        startedAtMs = startedAtMs,
+        jerkSettleMs = config.jerkSettleMs,
+        minSpeedMps = config.minSpeedMps,
+      ),
+    )
+    val removed = ArrayList<LocationSample>(removeCount)
+    repeat(removeCount) {
+      removed.add(0, location.removeLast())
+    }
+    val predecessor = location.lastOrNull { locationUsable(it, config) }
+    var previous = predecessor
+    var removedDistance = 0.0
+    for (point in removed) {
+      if (!locationUsable(point, config)) {
+        continue
+      }
+      val prior = previous
+      if (prior != null) {
+        removedDistance += haversineM(prior, point)
+      }
+      val speed = point.speedMps
+      if (speed != null && speed.isFinite()) {
+        speedSum -= speed
+        speedCount = max(0, speedCount - 1)
+      }
+      previous = point
+    }
+    distanceM = max(0.0, distanceM - removedDistance)
+    if (speedCount == 0) {
+      speedSum = 0.0
+    }
+    location.add(stored)
+    if (locationUsable(stored, config)) {
+      lastGoodLocation = stored
+      val speed = stored.speedMps
+      if (speed != null && speed.isFinite()) {
+        speedSum += speed
+        speedCount += 1
+        maxSpeedMps = maxSpeedMps?.let { max(it, speed) } ?: speed
+      }
+    } else {
+      lastGoodLocation = predecessor
+    }
+    longitudinalAccelMps2 = null
+    lateralAccelMps2 = null
+    pathOnlyLateral = false
+    yawRateRadps = null
+    gpsMotionAtT = stored.t
+    gpsBrake = GpsBrakeSample(null, null, null, null, null)
+    yawJerkRadps2 = null
+    prevYawRateRadps = null
+    prevYawAtT = null
+    return AnalyzerPush(metrics = buildMetrics(stored.t), newEvents = emptyList())
   }
 
   fun pushImu(sample: ImuSample): AnalyzerPush {

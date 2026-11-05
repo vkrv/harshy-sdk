@@ -313,6 +313,73 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertLessThan(session.metrics.distanceM, 50)
   }
 
+  private func snap(
+    _ t: Double,
+    _ lat: Double,
+    _ lon: Double,
+    speedMps: Double,
+    accuracyM: Double
+  ) -> HarshyLocationSample {
+    HarshyLocationSample(t: t, lat: lat, lon: lon, speedMps: speedMps, courseDeg: 0, accuracyM: accuracyM)
+  }
+
+  func testReplacesParkedAccuracySnapInsteadOfRecordingTheJump() {
+    let analyzer = HarshyTripAnalyzer(
+      config: quiet,
+      sessionId: "accuracy-snap",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    _ = analyzer.pushLocation(snap(0, 32, 34, speedMps: 0, accuracyM: 40))
+    _ = analyzer.pushLocation(snap(1000, 32.0001978507533, 34, speedMps: 0, accuracyM: 40))
+    let corrected = analyzer.pushLocation(
+      snap(2000, 31.999999999988972, 34.00005302303077, speedMps: 0, accuracyM: 6)
+    )
+    let session = analyzer.finalize(endedAtMs: 3000)
+    XCTAssertTrue(corrected.newEvents.isEmpty)
+    XCTAssertEqual(corrected.metrics.locationAccuracyM ?? -1, 6, accuracy: 0)
+    XCTAssertNil(corrected.metrics.longitudinalAccelMps2)
+    XCTAssertTrue(session.events.isEmpty)
+    XCTAssertEqual(session.location.count, 1)
+    XCTAssertEqual(session.location[0].lat, 31.999999999988972, accuracy: 1e-8)
+    XCTAssertEqual(session.location[0].lon, 34.00005302303077, accuracy: 1e-8)
+    XCTAssertEqual(session.location[0].accuracyM ?? -1, 6, accuracy: 0)
+    XCTAssertEqual(session.metrics.distanceM, 0, accuracy: 0.001)
+  }
+
+  func testKeepsDrivenDistanceWhenAStopTightens() {
+    let analyzer = HarshyTripAnalyzer(
+      config: quiet,
+      sessionId: "accuracy-snap-drive",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    _ = analyzer.pushLocation(snap(0, 32, 34, speedMps: 12, accuracyM: 5))
+    _ = analyzer.pushLocation(snap(5000, 32.00089932160592, 34, speedMps: 12, accuracyM: 8))
+    _ = analyzer.pushLocation(snap(6000, 32.00112415200739, 34, speedMps: 0, accuracyM: 40))
+    _ = analyzer.pushLocation(snap(7000, 32.00089932157769, 34.000084837681335, speedMps: 0, accuracyM: 6))
+    let session = analyzer.finalize(endedAtMs: 8000)
+    XCTAssertEqual(session.location.count, 3)
+    XCTAssertFalse(session.location.contains { $0.lat == 32.00112415200739 })
+    XCTAssertEqual(session.location[2].accuracyM ?? -1, 6, accuracy: 0)
+    XCTAssertEqual(session.metrics.distanceM, 100, accuracy: 0.1)
+    XCTAssertTrue(session.events.isEmpty)
+  }
+
+  func testKeepsTighteningFixThatStillReportsMoving() {
+    let analyzer = HarshyTripAnalyzer(
+      config: HarshyDetectorConfig.default,
+      sessionId: "accuracy-snap-moving",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    _ = analyzer.pushLocation(snap(0, 32, 34, speedMps: 12, accuracyM: 40))
+    _ = analyzer.pushLocation(snap(1000, 32.0001978507533, 34, speedMps: 12, accuracyM: 6))
+    let session = analyzer.finalize(endedAtMs: 2000)
+    XCTAssertEqual(session.location.count, 2)
+    XCTAssertGreaterThan(session.metrics.distanceM, 20)
+  }
+
   func testDropsCoarseNetworkLikeFixWithoutSpeed() {
     let analyzer = HarshyTripAnalyzer(
       config: quiet,

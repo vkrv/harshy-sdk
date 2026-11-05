@@ -40,6 +40,27 @@ export const DRIVE_FIX_COARSE_FRACTION_DIGITS = 7;
 /** GNSS-quality horizontal accuracy — not a cell/Wi‑Fi inject. */
 export const DRIVE_FIX_GNSS_ACCURACY_M = 50;
 
+/**
+ * A parked fix at least this loose can be replaced when a tighter fix arrives.
+ * Tighter than this is ordinary jitter.
+ */
+export const ACCURACY_SNAP_MIN_ANCHOR_M = 15;
+
+/** The new reading must be at least this many metres tighter than the anchor. */
+export const ACCURACY_SNAP_MIN_IMPROVEMENT_M = 10;
+
+/** The new reading must be no worse than this fraction of the anchor accuracy. */
+export const ACCURACY_SNAP_RATIO = 0.5;
+
+/** Steps at or under this are jitter, not the jump a tightening lock produces. */
+export const ACCURACY_SNAP_MIN_JUMP_M = 3;
+
+/** A correction older than this is a new segment, not the same parked fix. */
+export const ACCURACY_SNAP_MAX_DT_SEC = 60;
+
+/** Matches the detector default `minSpeedMps` when a caller does not pass one. */
+export const ACCURACY_SNAP_DEFAULT_MIN_SPEED_MPS = 2;
+
 export type DriveFixPoint = {
   lat: number;
   lon: number;
@@ -54,6 +75,8 @@ export type DriveFixOptions = {
   spikeMinM?: number;
   spikeRatio?: number;
   resetAfter?: number;
+  /** Reported speed below this is stopped. Defaults to {@link ACCURACY_SNAP_DEFAULT_MIN_SPEED_MPS}. */
+  minSpeedMps?: number;
 };
 
 /** Fractional decimal digits as JSON/JS typically print the number. */
@@ -169,6 +192,112 @@ export function speedLeapHolds(
   return out >= 1 && back > out * 0.85 && onward > out * 0.35;
 }
 
+function positiveAccuracy(value: number | null | undefined): value is number {
+  return value != null && Number.isFinite(value) && value > 0;
+}
+
+function stoppedSpeed(speedMps: number | null | undefined, minSpeedMps: number): boolean {
+  return !finiteSpeed(speedMps) || speedMps < minSpeedMps;
+}
+
+/**
+ * Parked accuracy collapse: the chip still says stopped, the new fix is much
+ * tighter, and the coordinate jump fits inside the old error disk. That is a
+ * better estimate of the same place, not motion.
+ */
+export function isStationaryAccuracySnap(
+  anchor: DriveFixPoint,
+  sample: DriveFixPoint,
+  minSpeedMps = ACCURACY_SNAP_DEFAULT_MIN_SPEED_MPS,
+): boolean {
+  if (!finiteSpeed(sample.speedMps) || sample.speedMps >= minSpeedMps) {
+    return false;
+  }
+  if (!stoppedSpeed(anchor.speedMps, minSpeedMps)) {
+    return false;
+  }
+  if (!positiveAccuracy(anchor.accuracyM) || !positiveAccuracy(sample.accuracyM)) {
+    return false;
+  }
+  if (anchor.accuracyM < ACCURACY_SNAP_MIN_ANCHOR_M) {
+    return false;
+  }
+  if (sample.accuracyM > anchor.accuracyM * ACCURACY_SNAP_RATIO) {
+    return false;
+  }
+  if (anchor.accuracyM - sample.accuracyM < ACCURACY_SNAP_MIN_IMPROVEMENT_M) {
+    return false;
+  }
+  if (
+    anchor.t == null ||
+    sample.t == null ||
+    !Number.isFinite(anchor.t) ||
+    !Number.isFinite(sample.t)
+  ) {
+    return false;
+  }
+  const dtSec = (sample.t - anchor.t) / 1000;
+  if (!Number.isFinite(dtSec) || dtSec < 0 || dtSec > ACCURACY_SNAP_MAX_DT_SEC) {
+    return false;
+  }
+  const distance = haversineM(anchor, sample);
+  return distance > ACCURACY_SNAP_MIN_JUMP_M && distance <= anchor.accuracyM + sample.accuracyM;
+}
+
+/** A trailing parked point that the tighter fix still explains. */
+function inAccuracySnapTail(
+  point: DriveFixPoint,
+  sample: DriveFixPoint,
+  minSpeedMps: number,
+): boolean {
+  if (!stoppedSpeed(point.speedMps, minSpeedMps)) {
+    return false;
+  }
+  if (
+    point.t == null ||
+    sample.t == null ||
+    !Number.isFinite(point.t) ||
+    !Number.isFinite(sample.t)
+  ) {
+    return false;
+  }
+  const dtSec = (sample.t - point.t) / 1000;
+  if (!Number.isFinite(dtSec) || dtSec < 0 || dtSec > ACCURACY_SNAP_MAX_DT_SEC) {
+    return false;
+  }
+  if (!positiveAccuracy(point.accuracyM) || !positiveAccuracy(sample.accuracyM)) {
+    return false;
+  }
+  if (point.accuracyM < sample.accuracyM) {
+    return false;
+  }
+  return haversineM(point, sample) <= point.accuracyM + sample.accuracyM;
+}
+
+/**
+ * How many trailing points a tightening parked fix replaces.
+ * `0` when `sample` is real motion or ordinary jitter.
+ */
+export function stationaryAccuracySnapTailCount(
+  points: readonly DriveFixPoint[],
+  sample: DriveFixPoint,
+  minSpeedMps = ACCURACY_SNAP_DEFAULT_MIN_SPEED_MPS,
+): number {
+  const anchor = points[points.length - 1];
+  if (anchor == null || !isStationaryAccuracySnap(anchor, sample, minSpeedMps)) {
+    return 0;
+  }
+  let count = 0;
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const point = points[index];
+    if (point == null || !inAccuracySnapTail(point, sample, minSpeedMps)) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+}
+
 /** True when the step from `from` → `to` is a plausible on-road GPS update. */
 export function isPlausibleDriveStep(
   from: DriveFixPoint,
@@ -202,7 +331,8 @@ export function isDrivePathSpike(
 
 /**
  * Batch filter for already-recorded paths (legacy History / Maps).
- * Live capture rejects in {@link shouldAcceptDriveFix} / `pushLocation`.
+ * Live capture rejects teleports in {@link shouldAcceptDriveFix} / `pushLocation`
+ * and replaces a parked accuracy snap via {@link stationaryAccuracySnapTailCount}.
  */
 export function compensateDrivePath<T extends DriveFixPoint>(
   points: readonly T[],
@@ -217,6 +347,7 @@ export function compensateDrivePath<T extends DriveFixPoint>(
   }
 
   const resetAfter = options.resetAfter ?? DRIVE_FIX_RESET_AFTER;
+  const minSpeedMps = options.minSpeedMps ?? ACCURACY_SNAP_DEFAULT_MIN_SPEED_MPS;
   const kept: T[] = [];
   let rejects = 0;
 
@@ -236,6 +367,14 @@ export function compensateDrivePath<T extends DriveFixPoint>(
     const prev = kept[kept.length - 1];
     if (prev == null) {
       kept.push(cur);
+      continue;
+    }
+
+    const snapTail = stationaryAccuracySnapTailCount(kept, cur, minSpeedMps);
+    if (snapTail > 0) {
+      kept.splice(kept.length - snapTail, snapTail);
+      kept.push(cur);
+      rejects = 0;
       continue;
     }
 

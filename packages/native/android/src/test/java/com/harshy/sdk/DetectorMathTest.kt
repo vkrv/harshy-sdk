@@ -86,6 +86,28 @@ class DetectorMathTest {
   }
 
   @Test
+  fun parkedAccuracySnapReplacesTheLooseTail() {
+    val loose = LocationSample(t = 0.0, lat = 32.0, lon = 34.0, speedMps = 0.0, accuracyM = 40.0)
+    val wander = LocationSample(
+      t = 1000.0,
+      lat = 32.0001978507533,
+      lon = 34.0,
+      speedMps = 0.0,
+      accuracyM = 40.0,
+    )
+    val tight = LocationSample(
+      t = 2000.0,
+      lat = 31.999999999988972,
+      lon = 34.00005302303077,
+      speedMps = 0.0,
+      accuracyM = 6.0,
+    )
+    assertTrue(isStationaryAccuracySnap(wander, tight))
+    assertEquals(2, stationaryAccuracySnapTailCount(listOf(loose, wander), tight))
+    assertFalse(isStationaryAccuracySnap(loose, tight.copy(speedMps = 12.0)))
+  }
+
+  @Test
   fun acceptsAfterEnoughImplausibleSteps() {
     val far = LocationSample(
       t = 732.0,

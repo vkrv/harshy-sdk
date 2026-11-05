@@ -42,6 +42,12 @@ internal const val DRIVE_FIX_MAX_STEP_M = 80.0
 internal const val DRIVE_FIX_RESET_AFTER = 10
 internal const val DRIVE_FIX_COARSE_FRACTION_DIGITS = 7
 internal const val DRIVE_FIX_GNSS_ACCURACY_M = 50.0
+internal const val ACCURACY_SNAP_MIN_ANCHOR_M = 15.0
+internal const val ACCURACY_SNAP_MIN_IMPROVEMENT_M = 10.0
+internal const val ACCURACY_SNAP_RATIO = 0.5
+internal const val ACCURACY_SNAP_MIN_JUMP_M = 3.0
+internal const val ACCURACY_SNAP_MAX_DT_SEC = 60.0
+internal const val ACCURACY_SNAP_DEFAULT_MIN_SPEED_MPS = 2.0
 
 internal fun coordinateFractionDigits(value: Double): Int {
   if (!value.isFinite()) {
@@ -275,6 +281,90 @@ internal fun speedLeapHolds(
   val back = haversineM(anchor, next)
   val onward = haversineM(leap, next)
   return out >= 1.0 && back > out * 0.85 && onward > out * 0.35
+}
+
+private fun positiveAccuracy(value: Double?): Boolean {
+  return value != null && value.isFinite() && value > 0.0
+}
+
+private fun stoppedSpeed(speedMps: Double?, minSpeedMps: Double): Boolean {
+  return speedMps == null || !speedMps.isFinite() || speedMps < minSpeedMps
+}
+
+internal fun isStationaryAccuracySnap(
+  anchor: LocationSample,
+  sample: LocationSample,
+  minSpeedMps: Double = ACCURACY_SNAP_DEFAULT_MIN_SPEED_MPS,
+): Boolean {
+  val sampleSpeed = sample.speedMps
+  if (sampleSpeed == null || !sampleSpeed.isFinite() || sampleSpeed < 0.0 || sampleSpeed >= minSpeedMps) {
+    return false
+  }
+  if (!stoppedSpeed(anchor.speedMps, minSpeedMps)) {
+    return false
+  }
+  val anchorAccuracy = anchor.accuracyM
+  val sampleAccuracy = sample.accuracyM
+  if (!positiveAccuracy(anchorAccuracy) || !positiveAccuracy(sampleAccuracy)) {
+    return false
+  }
+  if (anchorAccuracy!! < ACCURACY_SNAP_MIN_ANCHOR_M) {
+    return false
+  }
+  if (sampleAccuracy!! > anchorAccuracy * ACCURACY_SNAP_RATIO) {
+    return false
+  }
+  if (anchorAccuracy - sampleAccuracy < ACCURACY_SNAP_MIN_IMPROVEMENT_M) {
+    return false
+  }
+  val dtSec = (sample.t - anchor.t) / 1000.0
+  if (!dtSec.isFinite() || dtSec < 0.0 || dtSec > ACCURACY_SNAP_MAX_DT_SEC) {
+    return false
+  }
+  val distance = haversineM(anchor, sample)
+  return distance > ACCURACY_SNAP_MIN_JUMP_M && distance <= anchorAccuracy + sampleAccuracy
+}
+
+private fun inAccuracySnapTail(
+  point: LocationSample,
+  sample: LocationSample,
+  minSpeedMps: Double,
+): Boolean {
+  if (!stoppedSpeed(point.speedMps, minSpeedMps)) {
+    return false
+  }
+  val dtSec = (sample.t - point.t) / 1000.0
+  if (!dtSec.isFinite() || dtSec < 0.0 || dtSec > ACCURACY_SNAP_MAX_DT_SEC) {
+    return false
+  }
+  val pointAccuracy = point.accuracyM
+  val sampleAccuracy = sample.accuracyM
+  if (!positiveAccuracy(pointAccuracy) || !positiveAccuracy(sampleAccuracy)) {
+    return false
+  }
+  if (pointAccuracy!! < sampleAccuracy!!) {
+    return false
+  }
+  return haversineM(point, sample) <= pointAccuracy + sampleAccuracy
+}
+
+internal fun stationaryAccuracySnapTailCount(
+  points: List<LocationSample>,
+  sample: LocationSample,
+  minSpeedMps: Double = ACCURACY_SNAP_DEFAULT_MIN_SPEED_MPS,
+): Int {
+  val anchor = points.lastOrNull() ?: return 0
+  if (!isStationaryAccuracySnap(anchor, sample, minSpeedMps)) {
+    return 0
+  }
+  var count = 0
+  for (index in points.indices.reversed()) {
+    if (!inAccuracySnapTail(points[index], sample, minSpeedMps)) {
+      break
+    }
+    count += 1
+  }
+  return count
 }
 
 internal fun isPlausibleDriveStep(from: LocationSample, to: LocationSample): Boolean {

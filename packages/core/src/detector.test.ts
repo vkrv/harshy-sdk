@@ -55,6 +55,25 @@ function destination(
   return { lat: (lat2 * 180) / Math.PI, lon: (lon2 * 180) / Math.PI };
 }
 
+function fix(
+  t: number,
+  lat: number,
+  lon: number,
+  speedMps: number,
+  accuracyM: number,
+): LocationSample {
+  return {
+    t,
+    lat,
+    lon,
+    altitudeM: null,
+    speedMps,
+    courseDeg: 0,
+    accuracyM,
+    altitudeAccuracyM: null,
+  };
+}
+
 function placed(
   t: number,
   speedMps: number,
@@ -1212,6 +1231,63 @@ describe("detector", () => {
     expect(session.location).toHaveLength(2);
     expect(session.location.some((sample) => sample.lat === 59.4395306)).toBe(false);
     expect(session.metrics.distanceM).toBeLessThan(50);
+  });
+
+  it("replaces a parked accuracy snap instead of recording the jump", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "accuracy-snap",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    analyzer.pushLocation(fix(0, 32, 34, 0, 40));
+    analyzer.pushLocation(fix(1_000, 32.0001978507533, 34, 0, 40));
+    const corrected = analyzer.pushLocation(
+      fix(2_000, 31.999999999988972, 34.00005302303077, 0, 6),
+    );
+    const session = analyzer.finalize(3_000);
+    expect(corrected.newEvents).toEqual([]);
+    expect(corrected.metrics.locationAccuracyM).toBe(6);
+    expect(corrected.metrics.longitudinalAccelMps2).toBeNull();
+    expect(session.events).toEqual([]);
+    expect(session.location).toHaveLength(1);
+    expect(session.location[0]?.lat).toBeCloseTo(31.999999999988972, 8);
+    expect(session.location[0]?.lon).toBeCloseTo(34.00005302303077, 8);
+    expect(session.location[0]?.accuracyM).toBe(6);
+    expect(session.metrics.distanceM).toBeCloseTo(0, 3);
+  });
+
+  it("keeps driven distance when a stop tightens onto the corrected spot", () => {
+    const analyzer = createTripAnalyzer(
+      { harshAccelMps2: 50, harshBrakeMps2: 50, harshCornerMps2: 50 },
+      {
+        sessionId: "accuracy-snap-drive",
+        startedAtMs: 0,
+        device: { platform: "android", model: "test" },
+      },
+    );
+    analyzer.pushLocation(fix(0, 32, 34, 12, 5));
+    analyzer.pushLocation(fix(5_000, 32.00089932160592, 34, 12, 8));
+    analyzer.pushLocation(fix(6_000, 32.00112415200739, 34, 0, 40));
+    analyzer.pushLocation(fix(7_000, 32.00089932157769, 34.000084837681335, 0, 6));
+    const session = analyzer.finalize(8_000);
+    expect(session.location).toHaveLength(3);
+    expect(session.location.some((sample) => sample.lat === 32.00112415200739)).toBe(false);
+    expect(session.location[2]?.accuracyM).toBe(6);
+    expect(session.metrics.distanceM).toBeCloseTo(100, 1);
+    expect(session.events).toEqual([]);
+  });
+
+  it("keeps a tightening fix that still reports moving", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "accuracy-snap-moving",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    analyzer.pushLocation(fix(0, 32, 34, 12, 40));
+    analyzer.pushLocation(fix(1_000, 32.0001978507533, 34, 12, 6));
+    const session = analyzer.finalize(2_000);
+    expect(session.location).toHaveLength(2);
+    expect(session.metrics.distanceM).toBeGreaterThan(20);
   });
 
   it("does not treat a GPS speed spike as max speed", () => {

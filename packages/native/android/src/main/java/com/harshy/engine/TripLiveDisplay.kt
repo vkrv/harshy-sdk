@@ -33,6 +33,15 @@ fun shortCriticalScore(score: String): String {
   return if (trimmed.length <= 7) trimmed else trimmed.take(7)
 }
 
+/** Which ongoing notice, if any, should be on screen. A trip wins over the watch. */
+enum class TripNoticeKind { Trip, Watch, None }
+
+fun tripNoticeKind(running: Boolean, watching: Boolean): TripNoticeKind = when {
+  running -> TripNoticeKind.Trip
+  watching -> TripNoticeKind.Watch
+  else -> TripNoticeKind.None
+}
+
 object TripLiveDisplay {
   const val CHANNEL_ID = "harshy-trip"
   const val NOTIFICATION_ID = 4217
@@ -125,26 +134,57 @@ object TripLiveDisplay {
 
   /**
    * Update the sticky trip notification. Throttled to ~1 Hz unless [force].
+   * A score that arrives after the trip has ended is dropped, so it cannot
+   * recreate the status-bar chip once the notice has been removed. While only
+   * the watch is armed, the “Waiting for a drive” notice is left as it is.
    */
   fun update(context: Context, payload: TripLivePayload, force: Boolean = false) {
-    lastPayload = payload
-    val now = SystemClock.elapsedRealtime()
-    if (!force && now - lastNotifyElapsedMs < 900L) {
-      return
+    synchronized(this) {
+      val engine = HarshyEngine.shared(context)
+      if (tripNoticeKind(engine.isRunning(), engine.isWatching()) != TripNoticeKind.Trip) {
+        return
+      }
+      lastPayload = payload
+      val now = SystemClock.elapsedRealtime()
+      if (!force && now - lastNotifyElapsedMs < 900L) {
+        return
+      }
+      lastNotifyElapsedMs = now
+      try {
+        val notification = buildNotification(context, payload)
+        NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+      } catch (error: SecurityException) {
+        // POST_NOTIFICATIONS denied — FGS may still hold the initial notice.
+        Log.w(TAG, "notify blocked", error)
+      } catch (error: Exception) {
+        Log.w(TAG, "notify failed", error)
+      }
     }
-    lastNotifyElapsedMs = now
-    try {
-      val notification = buildNotification(context, payload)
-      NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
-    } catch (error: SecurityException) {
-      // POST_NOTIFICATIONS denied — FGS may still hold the initial notice.
-      Log.w(TAG, "notify blocked", error)
-    } catch (error: Exception) {
-      Log.w(TAG, "notify failed", error)
+  }
+
+  /** Remove the status-bar chip and the shade card, including a promoted Live Update. */
+  fun dismiss(context: Context) {
+    synchronized(this) {
+      val engine = HarshyEngine.shared(context)
+      if (tripNoticeKind(engine.isRunning(), engine.isWatching()) != TripNoticeKind.None) {
+        return
+      }
+      clearCacheLocked()
+      try {
+        NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
+      } catch (error: Exception) {
+        Log.w(TAG, "cancel failed", error)
+      }
     }
   }
 
   fun clearCache() {
+    synchronized(this) {
+      clearCacheLocked()
+    }
+  }
+
+  private fun clearCacheLocked() {
     lastPayload = null
     lastNotifyElapsedMs = 0L
   }

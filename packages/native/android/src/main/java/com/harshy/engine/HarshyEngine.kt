@@ -370,6 +370,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       // Auto re-arms next. Stopping the service and calling startForegroundService
       // from the background throws ForegroundServiceStartNotAllowedException.
       if (ForegroundServiceHandoff.keepRunning(handoffToWatch, foregroundUp)) {
+        // Drop the score so a service restart cannot show it over “Waiting for a drive”.
+        TripLiveDisplay.clearCache()
         publishWatchNotification()
       } else {
         stopForeground()
@@ -488,6 +490,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   fun markForegroundServiceStopped() {
     foregroundUp = false
   }
+
+  fun isForegroundServiceUp(): Boolean = foregroundUp
 
   fun snapshot(
     endedAtMs: Long = System.currentTimeMillis(),
@@ -980,6 +984,10 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
 
   private fun stopForeground() {
     foregroundUp = false
+    // cancel() removes a notice posted with notify(). The service then
+    // stopForeground(REMOVE)s in onDestroy so a promoted Live Update tied to the
+    // foreground service leaves the status bar. Do not start the service again here.
+    TripLiveDisplay.dismiss(context)
     try {
       context.stopService(Intent(context, TripForegroundService::class.java))
     } catch (_: Exception) {

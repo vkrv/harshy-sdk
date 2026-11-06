@@ -50,20 +50,33 @@ class TripForegroundService : Service() {
       if (!restoredTrip && !engine.isRunning()) {
         engine.restoreWatchIfNeeded(fromService = true)
       }
-      if (!engine.isRunning() && !engine.isWatching()) {
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+      if (tripNoticeKind(engine.isRunning(), engine.isWatching()) == TripNoticeKind.None) {
+        retireIdleNotice()
+        // START_STICKY here would recreate the service and post the last score again.
+        START_NOT_STICKY
+      } else {
+        START_STICKY
       }
-      START_STICKY
     } catch (error: Exception) {
       Log.e(TAG, "onStartCommand failed", error)
       try {
         stopForeground(STOP_FOREGROUND_REMOVE)
       } catch (_: Exception) {
       }
+      TripLiveDisplay.dismiss(this)
       stopSelf()
       START_NOT_STICKY
     }
+  }
+
+  /** Drop the score chip and the shade card, then stop. */
+  private fun retireIdleNotice() {
+    try {
+      stopForeground(STOP_FOREGROUND_REMOVE)
+    } catch (_: Exception) {
+    }
+    TripLiveDisplay.dismiss(this)
+    stopSelf()
   }
 
   override fun onTaskRemoved(rootIntent: Intent?) {
@@ -71,8 +84,17 @@ class TripForegroundService : Service() {
   }
 
   override fun onDestroy() {
-    HarshyEngine.shared(this).markForegroundServiceStopped()
-    TripLiveDisplay.clearCache()
+    val engine = HarshyEngine.shared(this)
+    val idle = tripNoticeKind(engine.isRunning(), engine.isWatching()) == TripNoticeKind.None
+    try {
+      // A live trip or watch keeps its notice for the restart. An idle stop removes it.
+      stopForeground(if (idle) STOP_FOREGROUND_REMOVE else STOP_FOREGROUND_DETACH)
+    } catch (_: Exception) {
+    }
+    if (idle) {
+      TripLiveDisplay.dismiss(this)
+    }
+    engine.markForegroundServiceStopped()
     super.onDestroy()
   }
 

@@ -1,7 +1,9 @@
 package com.harshy.sdk
 
 import com.harshy.engine.TripLivePayload
+import com.harshy.engine.TripNoticeKind
 import com.harshy.engine.shortCriticalScore
+import com.harshy.engine.tripNoticeKind
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -68,6 +70,14 @@ class TripLiveTest {
   fun notificationLineJoinsKeyNumbers() {
     val payload = TripLivePayload("Apexmatic", "90", "40 km/h", "0:12", "0.10 km")
     assertEquals("Score 90 · 40 km/h · 0:12 · 0.10 km", payload.line())
+  }
+
+  @Test
+  fun noticeKindKeepsTheScoreOnlyWhileATripIsRunning() {
+    assertEquals(TripNoticeKind.Trip, tripNoticeKind(running = true, watching = true))
+    assertEquals(TripNoticeKind.Trip, tripNoticeKind(running = true, watching = false))
+    assertEquals(TripNoticeKind.Watch, tripNoticeKind(running = false, watching = true))
+    assertEquals(TripNoticeKind.None, tripNoticeKind(running = false, watching = false))
   }
 
   @Test

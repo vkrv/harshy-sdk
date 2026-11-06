@@ -194,6 +194,8 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
   let sessionId: string | null = null;
   const listeners = new Set<HarshyListeners>();
   let lastLivePublishMs = 0;
+  /** Closed at the start of stop() so a late metrics push cannot recreate the notice. */
+  let liveNoticeOpen = false;
   const liveTitle = deps.liveDisplayTitle ?? "Apexmatic";
   const formatLive =
     deps.formatLiveDisplay ?? ((metrics: LiveMetrics, title: string) => formatTripLiveDisplay(metrics, title));
@@ -241,6 +243,9 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
   };
 
   const publishLiveDisplay = (metrics: LiveMetrics, force = false) => {
+    if (!liveNoticeOpen) {
+      return;
+    }
     const now = Date.now();
     if (!force && now - lastLivePublishMs < 900) {
       return;
@@ -656,6 +661,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
     // Journal replay fills the analyzer; surface those events so a reopened
     // host shows the same list as before process death (path uses getLiveLocation).
     const recoveredEvents = analyzer.getEvents();
+    liveNoticeOpen = true;
     bindEngine();
     running = true;
     source = "native";
@@ -771,6 +777,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       endHeuristic = emptyTripEndState();
       commitHeuristic = emptyTripStartState();
       tripWarmup = tripTrigger === "auto";
+      liveNoticeOpen = true;
       bindEngine();
       try {
         await engine.start(nativeOpts);
@@ -779,6 +786,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
         unsubscribeEngine = null;
         analyzer = null;
         lastRaw = null;
+        liveNoticeOpen = false;
         running = false;
         source = "idle";
         tripTrigger = null;
@@ -869,6 +877,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       return attachIfRunning(options);
     },
     async stop() {
+      liveNoticeOpen = false;
       const discard = discardNextStop;
       discardNextStop = false;
       const liveAnalyzer = analyzer;
@@ -881,7 +890,7 @@ export function createHarshy(deps: CreateHarshyDeps = {}): HarshyClient {
       const raw = engine
         ? await engine.stop({ handoffToWatch: recordingMode === "auto" })
         : null;
-      void engine?.clearLiveDisplay?.();
+      await engine?.clearLiveDisplay?.();
       lastLivePublishMs = 0;
       unsubscribeEngine?.();
       unsubscribeEngine = null;

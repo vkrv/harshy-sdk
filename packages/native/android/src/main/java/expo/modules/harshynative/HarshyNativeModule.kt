@@ -84,7 +84,19 @@ class HarshyNativeModule : Module() {
     }
 
     AsyncFunction("clearTripLiveDisplay") {
-      com.harshy.engine.TripLiveDisplay.clearCache()
+      val context = appContext.reactContext?.applicationContext
+        ?: appContext.currentActivity?.applicationContext
+      if (context == null) {
+        com.harshy.engine.TripLiveDisplay.clearCache()
+        return@AsyncFunction
+      }
+      val live = com.harshy.engine.HarshyEngine.shared(context)
+      val keepNotice = live.isRunning() || live.isWatching() || live.isForegroundServiceUp()
+      if (keepNotice) {
+        com.harshy.engine.TripLiveDisplay.clearCache()
+      } else {
+        com.harshy.engine.TripLiveDisplay.dismiss(context)
+      }
     }
 
     AsyncFunction("armWatch") {

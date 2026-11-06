@@ -74,13 +74,14 @@ class HarshyNativeModule : Module() {
     AsyncFunction("updateTripLiveDisplay") { payload: Map<String, Any?> ->
       val context = appContext.reactContext?.applicationContext
         ?: appContext.currentActivity?.applicationContext
-        ?: return@AsyncFunction
+        ?: return@AsyncFunction null
       val label = context.applicationInfo.loadLabel(context.packageManager)?.toString().orEmpty()
         .ifBlank { "Apexmatic" }
       com.harshy.engine.TripLiveDisplay.update(
         context,
         com.harshy.sdk.tripLivePayloadFromMap(payload, label),
       )
+      null
     }
 
     AsyncFunction("clearTripLiveDisplay") {
@@ -88,7 +89,7 @@ class HarshyNativeModule : Module() {
         ?: appContext.currentActivity?.applicationContext
       if (context == null) {
         com.harshy.engine.TripLiveDisplay.clearCache()
-        return@AsyncFunction
+        return@AsyncFunction null
       }
       val live = com.harshy.engine.HarshyEngine.shared(context)
       val keepNotice = live.isRunning() || live.isWatching() || live.isForegroundServiceUp()
@@ -97,6 +98,7 @@ class HarshyNativeModule : Module() {
       } else {
         com.harshy.engine.TripLiveDisplay.dismiss(context)
       }
+      null
     }
 
     AsyncFunction("armWatch") {

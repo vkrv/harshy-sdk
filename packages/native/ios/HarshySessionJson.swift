@@ -5,202 +5,142 @@ public protocol HarshyUploadAdapter: AnyObject {
 }
 
 public extension HarshySessionExport {
+  /// The export as JSON-compatible values. Empty if the export holds a non-finite number; `toJSONString()` throws then.
   func toJSONObject() -> [String: Any] {
-    var json: [String: Any] = [
-      "schemaVersion": schemaVersion,
-      "sdkVersion": sdkVersion,
-      "sessionId": sessionId,
-      "startedAt": startedAt,
-      "endedAt": endedAt ?? NSNull(),
-      "config": config.toJSONObject(),
-      "location": location.map { $0.toJSONObject() },
-      "imu": imu.map { $0.toJSONObject() },
-      "events": events.map { $0.toJSONObject() },
-      "metrics": metrics.toJSONObject(),
-      "device": [
-        "platform": device.platform,
-        "model": device.model ?? NSNull(),
-      ] as [String: Any],
-      "trigger": trigger,
-    ]
-    if let capture {
-      json["capture"] = capture.toJSONObject()
-    }
-    return json
+    harshyJSONObject(self)
   }
 
   func toJSONString() throws -> String {
-    let data = try JSONSerialization.data(withJSONObject: toJSONObject(), options: [])
-    return String(data: data, encoding: .utf8) ?? "{}"
+    String(decoding: try JSONEncoder().encode(self), as: UTF8.self)
   }
 }
 
 extension HarshyDetectorConfig {
   func toJSONObject() -> [String: Any] {
-    var json: [String: Any] = [
-      "harshAccelMps2": harshAccelMps2,
-      "harshBrakeMps2": harshBrakeMps2,
-      "harshCornerMps2": harshCornerMps2,
-      "harshMediumX": harshMediumX,
-      "harshHeavyX": harshHeavyX,
-      "harshSwerveRadps": harshSwerveRadps,
-      "harshSwerveJerkRadps2": harshSwerveJerkRadps2,
-      "swerveMinSpeedMps": swerveMinSpeedMps,
-      "swerveMaxElevatedMs": swerveMaxElevatedMs,
-      "speedingExitX": speedingExitX,
-      "minSpeedMps": minSpeedMps,
-      "cooldownMs": cooldownMs,
-      "compoundWindowMs": compoundWindowMs,
-      "jerkSettleMs": jerkSettleMs,
-      "gpsAccelWindowMs": gpsAccelWindowMs,
-      "maxLocationAccuracyM": maxLocationAccuracyM,
-      "impactFloorMps2": impactFloorMps2,
-      "impactPeakMps2": impactPeakMps2,
-      "impactPeakHighMps2": impactPeakHighMps2,
-      "impactPulseMaxMs": impactPulseMaxMs,
-      "impactSpeedDeltaMps": impactSpeedDeltaMps,
-      "impactLookaheadMs": impactLookaheadMs,
-      "impactCooldownMs": impactCooldownMs,
-      "impactVerticalMax": impactVerticalMax,
-      "impactFreeFallMps2": impactFreeFallMps2,
-      "impactFreeFallLookbackMs": impactFreeFallLookbackMs,
-      "impactRolloverDeg": impactRolloverDeg,
-      "handheldTiltDeg": handheldTiltDeg,
-      "handheldExitTiltDeg": handheldExitTiltDeg,
-      "handheldGyroRadps": handheldGyroRadps,
-      "handheldMotionMps2": handheldMotionMps2,
-      "handheldQuietGyroRadps": handheldQuietGyroRadps,
-      "handheldQuietMotionMps2": handheldQuietMotionMps2,
-      "handheldStableMs": handheldStableMs,
-      "handheldConfirmMs": handheldConfirmMs,
-      "handheldExitMs": handheldExitMs,
-      "handheldCooldownMs": handheldCooldownMs,
-      "handheldBaselineAlpha": handheldBaselineAlpha,
-      "score": [
-        "start": score.start,
-        "harshAccel": score.harshAccel,
-        "harshBrake": score.harshBrake,
-        "harshCorner": score.harshCorner,
-        "swerve": score.swerve,
-        "speeding": score.speeding,
-        "jerk": score.jerk,
-        "compound": score.compound,
-        "refDistanceKm": score.refDistanceKm,
-        "refDurationMin": score.refDurationMin,
-        "minDistanceKm": score.minDistanceKm,
-        "minDurationMin": score.minDurationMin,
-        "smoothAccel": score.smoothAccel,
-        "smoothBrake": score.smoothBrake,
-        "smoothCorner": score.smoothCorner,
-      ],
-    ]
-    if let speedingMps {
-      json["speedingMps"] = speedingMps
-    }
-    return json
+    harshyJSONObject(self)
   }
 }
 
-extension HarshyNativeStartOptions {
-  func toJSONObject() -> [String: Any] {
-    var json: [String: Any] = [
-      "imuHz": imuHz,
-      "locationIntervalMs": locationIntervalMs,
-      "background": background,
-    ]
-    if let trigger {
-      json["trigger"] = trigger
-    }
-    return json
+private func harshyJSONObject(_ value: some Encodable) -> [String: Any] {
+  guard let data = try? JSONEncoder().encode(value),
+        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+  else { return [:] }
+  return object
+}
+
+// The format is shared with Kotlin and `@harshy/core`. Optionals are omitted when absent unless the format
+// requires an explicit `null`; those are written with `encode`, the rest with `encodeIfPresent`.
+
+extension HarshySessionExport: Encodable {
+  private enum CodingKeys: String, CodingKey {
+    case schemaVersion, sdkVersion, sessionId, startedAt, endedAt, config, location, imu, events, metrics, device
+    case trigger, capture
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(schemaVersion, forKey: .schemaVersion)
+    try container.encode(sdkVersion, forKey: .sdkVersion)
+    try container.encode(sessionId, forKey: .sessionId)
+    try container.encode(startedAt, forKey: .startedAt)
+    try container.encode(endedAt, forKey: .endedAt)
+    try container.encode(config, forKey: .config)
+    try container.encode(location, forKey: .location)
+    try container.encode(imu, forKey: .imu)
+    try container.encode(events, forKey: .events)
+    try container.encode(metrics, forKey: .metrics)
+    try container.encode(device, forKey: .device)
+    try container.encode(trigger, forKey: .trigger)
+    try container.encodeIfPresent(capture, forKey: .capture)
   }
 }
 
-extension HarshyLocationSample {
-  func toJSONObject() -> [String: Any] {
-    var json: [String: Any] = [
-      "t": t,
-      "lat": lat,
-      "lon": lon,
-      "speedMps": speedMps ?? NSNull(),
-      "accuracyM": accuracyM ?? NSNull(),
-    ]
-    if let altitudeM {
-      json["altitudeM"] = altitudeM
-    }
-    if let courseDeg {
-      json["courseDeg"] = courseDeg
-    }
-    if let altitudeAccuracyM {
-      json["altitudeAccuracyM"] = altitudeAccuracyM
-    }
-    if let roadRmsMps2 {
-      json["roadRmsMps2"] = roadRmsMps2
-    }
-    if let speedLimitMps {
-      json["speedLimitMps"] = speedLimitMps
-    }
-    return json
+extension HarshyDeviceInfo: Encodable {
+  private enum CodingKeys: String, CodingKey {
+    case platform, model
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(platform, forKey: .platform)
+    try container.encode(model, forKey: .model)
   }
 }
 
-extension HarshyImuSample {
-  func toJSONObject() -> [String: Any] {
-    [
-      "t": t,
-      "accel": accel.toJSONObject(),
-      "linearAccel": linearAccel?.toJSONObject() ?? NSNull(),
-      "gyro": gyro?.toJSONObject() ?? NSNull(),
-      "magnetometer": magnetometer?.toJSONObject() ?? NSNull(),
-      "attitude": attitude.map { ["pitch": $0.pitch, "roll": $0.roll, "yaw": $0.yaw] } ?? NSNull(),
-      "gravity": gravity?.toJSONObject() ?? NSNull(),
-      "barometerHpa": barometerHpa ?? NSNull(),
-    ]
+extension HarshyLocationSample: Encodable {
+  private enum CodingKeys: String, CodingKey {
+    case t, lat, lon, altitudeM, speedMps, courseDeg, accuracyM, altitudeAccuracyM, roadRmsMps2, speedLimitMps
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(t, forKey: .t)
+    try container.encode(lat, forKey: .lat)
+    try container.encode(lon, forKey: .lon)
+    try container.encode(speedMps, forKey: .speedMps)
+    try container.encode(accuracyM, forKey: .accuracyM)
+    try container.encodeIfPresent(altitudeM, forKey: .altitudeM)
+    try container.encodeIfPresent(courseDeg, forKey: .courseDeg)
+    try container.encodeIfPresent(altitudeAccuracyM, forKey: .altitudeAccuracyM)
+    try container.encodeIfPresent(roadRmsMps2, forKey: .roadRmsMps2)
+    try container.encodeIfPresent(speedLimitMps, forKey: .speedLimitMps)
   }
 }
 
-extension HarshyVec3 {
-  func toJSONObject() -> [String: Any] {
-    ["x": x, "y": y, "z": z]
+extension HarshyImuSample: Encodable {
+  private enum CodingKeys: String, CodingKey {
+    case t, accel, linearAccel, gyro, magnetometer, attitude, gravity, barometerHpa
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(t, forKey: .t)
+    try container.encode(accel, forKey: .accel)
+    try container.encode(linearAccel, forKey: .linearAccel)
+    try container.encode(gyro, forKey: .gyro)
+    try container.encode(magnetometer, forKey: .magnetometer)
+    try container.encode(attitude, forKey: .attitude)
+    try container.encode(gravity, forKey: .gravity)
+    try container.encode(barometerHpa, forKey: .barometerHpa)
   }
 }
 
-extension HarshyDrivingEvent {
-  func toJSONObject() -> [String: Any] {
-    var json: [String: Any] = [
-      "id": id,
-      "type": type,
-      "t": t,
-      "peak": peak,
-      "severity": severity,
-      "level": level,
-      "lat": lat ?? NSNull(),
-      "lon": lon ?? NSNull(),
-      "speedMps": speedMps ?? NSNull(),
-      "overlaps": overlaps,
-    ]
-    if let endT {
-      json["endT"] = endT
-    }
-    if let impactDirection {
-      json["impactDirection"] = impactDirection
-    }
-    if let speedLimitMps {
-      json["speedLimitMps"] = speedLimitMps
-    }
-    return json
+extension HarshyDrivingEvent: Encodable {
+  private enum CodingKeys: String, CodingKey {
+    case id, type, t, endT, peak, severity, level, lat, lon, speedMps, speedLimitMps, overlaps, impactDirection
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(id, forKey: .id)
+    try container.encode(type, forKey: .type)
+    try container.encode(t, forKey: .t)
+    try container.encode(peak, forKey: .peak)
+    try container.encode(severity, forKey: .severity)
+    try container.encode(level, forKey: .level)
+    try container.encode(lat, forKey: .lat)
+    try container.encode(lon, forKey: .lon)
+    try container.encode(speedMps, forKey: .speedMps)
+    try container.encode(overlaps, forKey: .overlaps)
+    try container.encodeIfPresent(endT, forKey: .endT)
+    try container.encodeIfPresent(impactDirection, forKey: .impactDirection)
+    try container.encodeIfPresent(speedLimitMps, forKey: .speedLimitMps)
   }
 }
 
-extension HarshyTripMetrics {
-  func toJSONObject() -> [String: Any] {
-    [
-      "distanceM": distanceM,
-      "durationMs": durationMs,
-      "maxSpeedMps": maxSpeedMps ?? NSNull(),
-      "avgSpeedMps": avgSpeedMps ?? NSNull(),
-      "points": points,
-      "score": score,
-      "eventCounts": eventCounts,
-    ]
+extension HarshyTripMetrics: Encodable {
+  private enum CodingKeys: String, CodingKey {
+    case distanceM, durationMs, maxSpeedMps, avgSpeedMps, points, score, eventCounts
+  }
+
+  public func encode(to encoder: Encoder) throws {
+    var container = encoder.container(keyedBy: CodingKeys.self)
+    try container.encode(distanceM, forKey: .distanceM)
+    try container.encode(durationMs, forKey: .durationMs)
+    try container.encode(maxSpeedMps, forKey: .maxSpeedMps)
+    try container.encode(avgSpeedMps, forKey: .avgSpeedMps)
+    try container.encode(points, forKey: .points)
+    try container.encode(score, forKey: .score)
+    try container.encode(eventCounts, forKey: .eventCounts)
   }
 }

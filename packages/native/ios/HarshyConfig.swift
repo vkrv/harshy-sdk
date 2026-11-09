@@ -62,7 +62,7 @@ public let harshyPathOnlyCornerMaxAccuracyM = 15.0
 /** Path-only lateral above this (~0.6 g) is GPS noise, not a vehicle turn. */
 public let harshyPathOnlyLateralMaxMps2 = 6.0
 
-public struct HarshyDetectorScoreWeights: Equatable, Sendable {
+public struct HarshyDetectorScoreWeights: Equatable, Sendable, Encodable {
   public var start: Double
   public var harshAccel: Double
   public var harshBrake: Double
@@ -114,7 +114,7 @@ public struct HarshyDetectorScoreWeights: Equatable, Sendable {
   }
 }
 
-public struct HarshyDetectorConfig: Equatable, Sendable {
+public struct HarshyDetectorConfig: Equatable, Sendable, Encodable {
   public var harshAccelMps2: Double
   public var harshBrakeMps2: Double
   public var harshCornerMps2: Double

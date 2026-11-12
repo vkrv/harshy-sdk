@@ -92,6 +92,8 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   private val mainHandler = Handler(Looper.getMainLooper())
   private var locationBindGen = 0
   private var locationRebindArmed = false
+  /** True after the single empty-trip retry. Reset when location capture stops. */
+  private var locationRebindUsed = false
   private val locationRebind = Runnable {
     synchronized(lifecycleLock) {
       locationRebindArmed = false
@@ -101,6 +103,9 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       if (synchronized(locationLock) { locationSamples.isNotEmpty() }) {
         return@synchronized
       }
+      // Consume the retry before bind. bind arms the timer while this is false,
+      // which used to remove the new request every 4s so a cold fix never landed.
+      locationRebindUsed = true
       bindTripLocationLocked()
     }
   }
@@ -768,7 +773,11 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     ) { onLocationChanged(it) }
     emitLastKnownTripFix()
     kickCurrentFix()
-    if (!locationRebindArmed && synchronized(locationLock) { locationSamples.isEmpty() }) {
+    val pendingSamples = synchronized(locationLock) { locationSamples.size }
+    if (
+      !locationRebindArmed &&
+      LocationRebind.shouldSchedule(pendingSamples, locationRebindUsed)
+    ) {
       locationRebindArmed = true
       mainHandler.postDelayed(locationRebind, LOCATION_REBIND_MS)
     }
@@ -777,6 +786,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   private fun cancelTripLocationLocked() {
     locationBindGen += 1
     locationRebindArmed = false
+    locationRebindUsed = false
     mainHandler.removeCallbacks(locationRebind)
   }
 

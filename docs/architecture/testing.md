@@ -3,7 +3,7 @@
 ## Stack
 
 - **Vitest** for `@harshy/core` and `@harshy/sdk`
-- **Native Android (JUnit):** `packages/native/android/src/test` via `android-unit` Gradle runner (`pnpm --filter @harshy/native test` / `test:android`). Covers detector parity, sample maps, harsh bands / GPS reject, RoadStamp, TripIdleGate, `assessRoad`, watch-fix maps, trip-live payload copy, journal `trigger` meta, LocationFallback, and LocationFeeds.
+- **Native Android (JUnit):** `packages/native/android/src/test` via `android-unit` Gradle runner (`pnpm --filter @harshy/native test` / `test:android`). Covers detector parity, sample maps, harsh bands / GPS reject, RoadStamp, TripIdleGate, `assessRoad`, watch-fix maps, trip-live payload copy, journal `trigger` meta, LocationFallback, LocationFeeds, and LocationRebind (one retry while the trip still has no fix).
 - **Native iOS (Swift PM):** `HarshyMath` package on macOS (`test:ios`) — Foundation-only Swift (analyzer, heading, road, idle gate, sample maps, watch activity, RoadStamp). `HarshyHeadlessTripRecorder` is in the package too: it takes its motion through the `HarshyMotionSource` protocol, so its lifecycle, stamping and failure handling run against a fake source. Only `HarshyCoreMotionSource` (the real Core Motion adapter) and the full `Harshy` client (CoreLocation / CoreMotion / UIKit) stay iOS-only SPM / CocoaPods. The package's sources and tests are symlinks into `ios/` and `Tests/`: a new Foundation-only Swift file is only compiled and tested here once you add a symlink for it under `HarshyMath/Sources/HarshyMath` (and one for its test under `HarshyMath/Tests/HarshyMathTests`).
 
 ## Quality gate

@@ -88,27 +88,12 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
   private var significantListener: TriggerEventListener? = null
   private val tripFeeds = LocationFeeds()
   private val watchFeeds = LocationFeeds()
-  private val watchSingleListeners = mutableListOf<LocationListener>()
+  /** Pre-API 30 one-shot listeners. Newer one-shots expire on their own. */
+  private val legacyOneShotListeners = Collections.synchronizedList(mutableListOf<LocationListener>())
   private val mainHandler = Handler(Looper.getMainLooper())
   private var locationBindGen = 0
-  private var locationRebindArmed = false
-  /** True after the single empty-trip retry. Reset when location capture stops. */
-  private var locationRebindUsed = false
-  private val locationRebind = Runnable {
-    synchronized(lifecycleLock) {
-      locationRebindArmed = false
-      if (!running && !previewing) {
-        return@synchronized
-      }
-      if (synchronized(locationLock) { locationSamples.isNotEmpty() }) {
-        return@synchronized
-      }
-      // Consume the retry before bind. bind arms the timer while this is false,
-      // which used to remove the new request every 4s so a cold fix never landed.
-      locationRebindUsed = true
-      bindTripLocationLocked()
-    }
-  }
+  /** True after the single retry of a registration that attached no provider. */
+  private var locationRegistrationRetried = false
   private var sessionId: String? = null
   private var startedAtMs: Long = 0
   private var imuHz = 25
@@ -530,12 +515,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     lastGpsFixAtMs = null
     bindLocationFeeds(
       watchFeeds,
-      listOfNotNull(
-        LocationManager.GPS_PROVIDER,
-        fusedProvider(),
-        LocationManager.NETWORK_PROVIDER,
-        LocationManager.PASSIVE_PROVIDER,
-      ),
+      LocationCapture.feeds(includeFused = fusedProvider() != null, includePassive = true),
       WatchFixMaps.WATCH_MIN_TIME_MS,
       WatchFixMaps.WATCH_MIN_DISTANCE_M,
     ) { emitWatchFix(it) }
@@ -555,8 +535,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     lastGpsFixAtMs = null
     watchStartState = WatchStartGate.State()
     unbindLocationFeeds(watchFeeds)
-    removeLocationUpdates(watchSingleListeners.toList())
-    watchSingleListeners.clear()
+    clearLegacyOneShots()
     val trigger = significantListener
     val motionSensor = significantMotion
     if (trigger != null && motionSensor != null) {
@@ -588,26 +567,11 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
 
   @SuppressLint("MissingPermission")
   private fun requestWatchSingleFix() {
-    val providers = listOfNotNull(
-      LocationManager.GPS_PROVIDER,
-      fusedProvider(),
-      LocationManager.NETWORK_PROVIDER,
-    )
-    val listeners = providers.map { ForwardingLocationListener { emitWatchFix(it) } }
-    val armed = synchronized(lifecycleLock) {
-      if (!watching || running) {
-        false
-      } else {
-        watchSingleListeners.addAll(listeners)
-        true
-      }
-    }
+    val armed = synchronized(lifecycleLock) { watching && !running }
     if (!armed) {
       return
     }
-    for ((provider, listener) in providers.zip(listeners)) {
-      requestSingleUpdate(provider, listener)
-    }
+    requestOneShot(fusedProvider() != null) { emitWatchFix(it) }
   }
 
   private fun emitWatchFix(location: Location) {
@@ -763,61 +727,84 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     // Caller holds lifecycleLock. Registration stays on the main thread.
     bindLocationFeeds(
       tripFeeds,
-      listOfNotNull(
-        LocationManager.GPS_PROVIDER,
-        fusedProvider(),
-        LocationManager.NETWORK_PROVIDER,
-      ),
+      LocationCapture.feeds(includeFused = fusedProvider() != null),
       locationIntervalMs,
       0f,
     ) { onLocationChanged(it) }
     emitLastKnownTripFix()
-    kickCurrentFix()
-    val pendingSamples = synchronized(locationLock) { locationSamples.size }
-    if (
-      !locationRebindArmed &&
-      LocationRebind.shouldSchedule(pendingSamples, locationRebindUsed)
-    ) {
-      locationRebindArmed = true
-      mainHandler.postDelayed(locationRebind, LOCATION_REBIND_MS)
+    requestOneShot(fusedProvider() != null) { onLocationChanged(it) }
+    if (!LocationCapture.shouldRetry(tripFeeds.activeListeners().size, locationRegistrationRetried)) {
+      return
+    }
+    // Nothing attached. One more try, then leave it. Do not tear down a live request to retry.
+    locationRegistrationRetried = true
+    val gen = locationBindGen
+    mainHandler.post {
+      synchronized(lifecycleLock) {
+        if (gen != locationBindGen || (!running && !previewing)) {
+          return@synchronized
+        }
+        bindTripLocationLocked()
+      }
     }
   }
 
   private fun cancelTripLocationLocked() {
     locationBindGen += 1
-    locationRebindArmed = false
-    locationRebindUsed = false
-    mainHandler.removeCallbacks(locationRebind)
+    locationRegistrationRetried = false
+    clearLegacyOneShots()
+  }
+
+  private fun clearLegacyOneShots() {
+    val listeners = legacyOneShotListeners.toList()
+    legacyOneShotListeners.clear()
+    removeLocationUpdates(listeners)
   }
 
   @SuppressLint("MissingPermission")
-  private fun kickCurrentFix() {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-      return
-    }
-    val deliver = Consumer<Location> { location ->
+  private fun requestOneShot(includeFused: Boolean, deliver: (Location) -> Unit) {
+    val consumer = Consumer<Location> { location ->
       if (location != null) {
-        onLocationChanged(location)
+        deliver(location)
       }
     }
-    for (provider in listOfNotNull(LocationManager.GPS_PROVIDER, fusedProvider())) {
+    for (feed in LocationCapture.oneShot(includeFused)) {
       try {
-        locationManager.getCurrentLocation(provider, null, context.mainExecutor, deliver)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+          val request = LocationRequest.Builder(0L)
+            .setQuality(feed.quality)
+            .setMaxUpdates(1)
+            .setDurationMillis(LocationCapture.CURRENT_FIX_MS)
+            .build()
+          locationManager.getCurrentLocation(
+            feed.provider,
+            request,
+            null,
+            context.mainExecutor,
+            consumer,
+          )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+          locationManager.getCurrentLocation(feed.provider, null, context.mainExecutor, consumer)
+        } else {
+          val listener = ForwardingLocationListener(deliver)
+          legacyOneShotListeners.add(listener)
+          requestSingleUpdate(feed.provider, listener)
+        }
       } catch (error: Exception) {
-        Log.w(TAG, "current fix failed for $provider", error)
+        Log.w(TAG, "current fix failed for ${feed.provider}", error)
       }
     }
   }
 
   private fun bindLocationFeeds(
     feeds: LocationFeeds,
-    providers: List<String>,
+    requested: List<LocationCapture.Feed>,
     minTime: Long,
     minDistance: Float,
     onLocation: (Location) -> Unit,
   ) {
-    val previous = feeds.open(providers, { provider, listener ->
-      requestLocationProvider(provider, minTime, minDistance, listener)
+    val previous = feeds.open(requested, { feed, listener ->
+      requestLocationProvider(feed, minTime, minDistance, listener)
     }, onLocation)
     removeLocationUpdates(previous)
   }
@@ -852,23 +839,24 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
 
   @SuppressLint("MissingPermission")
   private fun requestLocationProvider(
-    provider: String,
+    feed: LocationCapture.Feed,
     minTime: Long,
     minDistance: Float,
     listener: LocationListener,
   ): Boolean {
     try {
-      if (
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-        provider == LocationManager.FUSED_PROVIDER
-      ) {
-        val request = LocationRequest.Builder(minTime)
-          .setMinUpdateIntervalMillis(minTime)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        val passive = feed.provider == LocationManager.PASSIVE_PROVIDER
+        val request = LocationRequest.Builder(
+          if (passive) LocationRequest.PASSIVE_INTERVAL else minTime.coerceAtLeast(0L),
+        )
+          .setMinUpdateIntervalMillis(minTime.coerceAtLeast(0L))
           .setMinUpdateDistanceMeters(minDistance)
-          .setQuality(LocationRequest.QUALITY_HIGH_ACCURACY)
+          .setQuality(feed.quality)
+          .setMaxUpdateDelayMillis(0L)
           .build()
         locationManager.requestLocationUpdates(
-          LocationManager.FUSED_PROVIDER,
+          feed.provider,
           request,
           context.mainExecutor,
           listener,
@@ -876,7 +864,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
         return true
       }
       locationManager.requestLocationUpdates(
-        provider,
+        feed.provider,
         minTime,
         minDistance,
         listener,
@@ -884,7 +872,7 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       )
       return true
     } catch (error: Exception) {
-      Log.w(TAG, "location register failed for $provider", error)
+      Log.w(TAG, "location register failed for ${feed.provider}", error)
       return false
     }
   }
@@ -1105,7 +1093,6 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
     }
     if (previewing && !running) {
       listener?.onLocation(location.toSampleMap(nowMs))
-      noteTripFixArrived()
       return
     }
     val raw = location.toSampleMap(nowMs)
@@ -1138,15 +1125,6 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
       }
     }
     listener?.onLocation(sample)
-    noteTripFixArrived()
-  }
-
-  private fun noteTripFixArrived() {
-    if (!locationRebindArmed) {
-      return
-    }
-    locationRebindArmed = false
-    mainHandler.removeCallbacks(locationRebind)
   }
 
   @Deprecated("Deprecated in Android")
@@ -1269,7 +1247,6 @@ class HarshyEngine(private val context: Context) : SensorEventListener, Location
 
   companion object {
     private const val TAG = "HarshyEngine"
-    private const val LOCATION_REBIND_MS = 4_000L
     @Volatile private var instance: HarshyEngine? = null
 
     @JvmStatic

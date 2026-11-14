@@ -40,23 +40,24 @@ internal class LocationFeeds {
   fun activeListeners(): List<LocationListener> = active.toList()
 
   /**
-   * Register [providers]. Returns the previous listeners so the caller can
+   * Register [feeds]. Two feeds may share a provider when they ask for different
+   * quality. Returns the previous listeners so the caller can
    * [android.location.LocationManager.removeUpdates] them after the new requests exist.
    */
   fun open(
-    providers: List<String>,
-    register: (provider: String, listener: LocationListener) -> Boolean,
+    feeds: List<LocationCapture.Feed>,
+    register: (feed: LocationCapture.Feed, listener: LocationListener) -> Boolean,
     onLocation: (Location) -> Unit,
   ): List<LocationListener> {
     val previous = active.toList()
     val next = mutableListOf<LocationListener>()
-    for (provider in providers) {
-      if (provider.isBlank()) {
+    for (feed in feeds) {
+      if (feed.provider.isBlank()) {
         continue
       }
       val listener = ForwardingLocationListener(onLocation)
       val ok = try {
-        register(provider, listener)
+        register(feed, listener)
       } catch (_: Exception) {
         false
       }

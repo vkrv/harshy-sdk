@@ -26,6 +26,17 @@ final class HarshyClockTests: XCTestCase {
     XCTAssertEqual(clock.nowMs(), 1_700_000_000_010)
   }
 
+  func testConvertsDurationsToWholeMilliseconds() {
+    XCTAssertEqual(HarshyClock.milliseconds(of: .milliseconds(1_500)), 1_500)
+    XCTAssertEqual(HarshyClock.milliseconds(of: .seconds(2) + .microseconds(999)), 2_000)
+    XCTAssertEqual(HarshyClock.milliseconds(of: .zero), 0)
+  }
+
+  func testDefaultMonotonicClockStartsAtTheWallClock() {
+    let wallMs = Int64(Date().timeIntervalSince1970 * 1_000)
+    XCTAssertLessThan(abs(HarshyClock.monotonic().nowMs() - wallMs), 1_000)
+  }
+
   func testDefaultMonotonicClockNeverGoesBackwards() {
     let clock = HarshyClock.monotonic()
     let first = clock.nowMs()

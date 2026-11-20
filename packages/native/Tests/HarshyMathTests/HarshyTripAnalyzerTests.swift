@@ -377,7 +377,8 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertEqual(session.location.count, 3)
     XCTAssertFalse(session.location.contains { $0.lat == 32.00112415200739 })
     XCTAssertEqual(session.location[2].accuracyM ?? -1, 6, accuracy: 0)
-    XCTAssertEqual(session.metrics.distanceM, 100, accuracy: 0.1)
+    // 100 m driven plus the 8 m from the last moving fix to the corrected stop; the jump is not distance.
+    XCTAssertEqual(session.metrics.distanceM, 108, accuracy: 0.1)
     XCTAssertTrue(session.events.isEmpty)
   }
 
@@ -393,6 +394,203 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     let session = analyzer.finalize(endedAtMs: 2000)
     XCTAssertEqual(session.location.count, 2)
     XCTAssertGreaterThan(session.metrics.distanceM, 20)
+  }
+
+  /// Degrees of latitude per metre on the haversine sphere, as used by the accuracy-snap tests.
+  private let snapLatPerM = 0.00089932160592 / 100
+
+  func testKeepsTheDriveIntoAStopWhenALooseStoppedFixIsCorrected() {
+    let analyzer = HarshyTripAnalyzer(
+      config: quiet,
+      sessionId: "accuracy-snap-approach",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    // Moving fixes at 0 m and 100 m, a loose stopped fix at 140 m, then the stop corrected to 135 m.
+    _ = analyzer.pushLocation(snap(0, 32, 34, speedMps: 12, accuracyM: 5))
+    _ = analyzer.pushLocation(snap(10000, 32 + 100 * snapLatPerM, 34, speedMps: 12, accuracyM: 5))
+    _ = analyzer.pushLocation(snap(13000, 32 + 140 * snapLatPerM, 34, speedMps: 0, accuracyM: 40))
+    let corrected = analyzer.pushLocation(snap(14000, 32 + 135 * snapLatPerM, 34, speedMps: 0, accuracyM: 5))
+    let session = analyzer.finalize(endedAtMs: 15000)
+    XCTAssertEqual(corrected.metrics.distanceM, 135, accuracy: 0.1)
+    XCTAssertEqual(session.location.count, 3)
+    XCTAssertEqual(session.metrics.distanceM, 135, accuracy: 0.1)
+  }
+
+  func testTakesBackACleanKilometreWhenAStopCorrectionPullsDistanceUnderIt() {
+    let analyzer = HarshyTripAnalyzer(
+      config: quiet,
+      sessionId: "accuracy-snap-km",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let t = driveTo984m(analyzer)
+    let loose = analyzer.pushLocation(snap(t + 2000, 32 + 1010 * snapLatPerM, 34, speedMps: 0, accuracyM: 40))
+    XCTAssertEqual(loose.newEvents.map(\.id), ["smooth_km-1"])
+    let corrected = analyzer.pushLocation(snap(t + 3000, 32 + 990 * snapLatPerM, 34, speedMps: 0, accuracyM: 5))
+    XCTAssertEqual(corrected.metrics.distanceM, 990, accuracy: 0.1)
+    let session = analyzer.finalize(endedAtMs: t + 4000)
+    XCTAssertFalse(session.events.contains { $0.type == "smooth_km" })
+  }
+
+  func testAwardsACleanKilometreWhenAStopCorrectionMovesDistanceOverIt() {
+    let analyzer = HarshyTripAnalyzer(
+      config: quiet,
+      sessionId: "accuracy-snap-km-forward",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let t = driveTo984m(analyzer)
+    let loose = analyzer.pushLocation(snap(t + 2000, 32 + 990 * snapLatPerM, 34, speedMps: 0, accuracyM: 40))
+    XCTAssertTrue(loose.newEvents.isEmpty)
+    let corrected = analyzer.pushLocation(snap(t + 3000, 32 + 1010 * snapLatPerM, 34, speedMps: 0, accuracyM: 5))
+    XCTAssertEqual(corrected.metrics.distanceM, 1010, accuracy: 0.1)
+    XCTAssertEqual(corrected.newEvents.map(\.id), ["smooth_km-1"])
+    let session = analyzer.finalize(endedAtMs: t + 4000)
+    XCTAssertEqual(session.events.filter { $0.type == "smooth_km" }.count, 1)
+  }
+
+  func testMovesAHarshBrakeAtACorrectedStopIntoTheKilometreOfTheCorrectedStop() {
+    var config = HarshyDetectorConfig.default
+    config.harshAccelMps2 = 50
+    config.harshCornerMps2 = 50
+    let analyzer = HarshyTripAnalyzer(
+      config: config,
+      sessionId: "accuracy-snap-km-harsh",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    var t = driveTo984m(analyzer)
+    // Braking hard into a stop: the loose stopped fix lands past 1 km, then corrects to 990 m.
+    let loose = analyzer.pushLocation(snap(t + 2000, 32 + 1010 * snapLatPerM, 34, speedMps: 0, accuracyM: 40))
+    XCTAssertTrue(loose.newEvents.contains { $0.type == "harsh_brake" })
+    _ = analyzer.pushLocation(snap(t + 3000, 32 + 990 * snapLatPerM, 34, speedMps: 0, accuracyM: 5))
+    // Drive on past 2 km: the first kilometre had the brake, the second is clean.
+    t += 10000
+    var metres = 1002.0
+    while metres <= 2010 {
+      _ = analyzer.pushLocation(snap(t, 32 + metres * snapLatPerM, 34, speedMps: 12, accuracyM: 5))
+      t += 1000
+      metres += 12
+    }
+    let session = analyzer.finalize(endedAtMs: t)
+    XCTAssertEqual(session.events.filter { $0.type == "smooth_km" }.map(\.id), ["smooth_km-2"])
+  }
+
+  func testMovesAHarshBrakeAgainWhenACorrectedStopIsCorrectedASecondTime() {
+    var config = HarshyDetectorConfig.default
+    config.harshAccelMps2 = 50
+    config.harshCornerMps2 = 50
+    let analyzer = HarshyTripAnalyzer(
+      config: config,
+      sessionId: "accuracy-snap-km-harsh-twice",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let t = driveNorth(analyzer, from: 0, to: 984, startT: 0)
+    let loose = analyzer.pushLocation(snap(t + 2000, 32 + 1010 * snapLatPerM, 34, speedMps: 0, accuracyM: 40))
+    XCTAssertTrue(loose.newEvents.contains { $0.type == "harsh_brake" })
+    let first = analyzer.pushLocation(snap(t + 3000, 32 + 1005 * snapLatPerM, 34, speedMps: 0, accuracyM: 20))
+    XCTAssertEqual(first.metrics.distanceM, 1005, accuracy: 0.1)
+    let second = analyzer.pushLocation(snap(t + 4000, 32 + 990 * snapLatPerM, 34, speedMps: 0, accuracyM: 5))
+    XCTAssertEqual(second.metrics.distanceM, 990, accuracy: 0.1)
+    let end = driveNorth(analyzer, from: 1002, to: 2010, startT: t + 14000)
+    let session = analyzer.finalize(endedAtMs: end)
+    XCTAssertEqual(session.events.filter { $0.type == "smooth_km" }.map(\.id), ["smooth_km-2"])
+  }
+
+  func testAwardsAKilometreACorrectionMakesCleanAfterAStoppedTailClosedIt() {
+    var config = HarshyDetectorConfig.default
+    config.harshAccelMps2 = 50
+    config.harshCornerMps2 = 50
+    let analyzer = HarshyTripAnalyzer(
+      config: config,
+      sessionId: "accuracy-snap-km-harsh-tail",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let t = driveNorth(analyzer, from: 0, to: 984, startT: 0)
+    // Braking hard into a loose stop at 990 m, then a second loose stopped fix closes kilometre 1.
+    let brake = analyzer.pushLocation(snap(t + 2000, 32 + 990 * snapLatPerM, 34, speedMps: 0, accuracyM: 40))
+    XCTAssertTrue(brake.newEvents.contains { $0.type == "harsh_brake" })
+    let closed = analyzer.pushLocation(snap(t + 3000, 32 + 1010 * snapLatPerM, 34, speedMps: 0, accuracyM: 40))
+    XCTAssertTrue(closed.newEvents.isEmpty)
+    // The stop is really at 1,020 m, so the brake belongs to kilometre 2 and kilometre 1 is clean.
+    let corrected = analyzer.pushLocation(snap(t + 4000, 32 + 1020 * snapLatPerM, 34, speedMps: 0, accuracyM: 5))
+    XCTAssertEqual(corrected.metrics.distanceM, 1020, accuracy: 0.1)
+    XCTAssertEqual(corrected.newEvents.map(\.id), ["smooth_km-1"])
+    let end = driveNorth(analyzer, from: 1032, to: 2040, startT: t + 14000)
+    let session = analyzer.finalize(endedAtMs: end)
+    XCTAssertEqual(session.events.filter { $0.type == "smooth_km" }.map(\.id), ["smooth_km-1"])
+  }
+
+  func testMovesAnImuBrakeThatArrivesAfterALooseStoppedFixToTheCorrectedStop() {
+    // Only the IMU can call this a harsh brake: the GPS slows at about 3.3 m/s².
+    var config = HarshyDetectorConfig.default
+    config.harshAccelMps2 = 50
+    config.harshBrakeMps2 = 5
+    config.harshCornerMps2 = 50
+    let analyzer = HarshyTripAnalyzer(
+      config: config,
+      sessionId: "accuracy-snap-km-imu",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let slowing = driveNorth(analyzer, from: 0, to: 972, startT: 0)
+    _ = analyzer.pushLocation(snap(slowing, 32 + 984 * snapLatPerM, 34, speedMps: 10, accuracyM: 5))
+    // A mounted phone learns its forward axis while GPS shows the car slowing.
+    _ = analyzer.pushImu(mounted(slowing, x: -3))
+    let stopAt = slowing + 3000
+    _ = analyzer.pushLocation(snap(stopAt, 32 + 1010 * snapLatPerM, 34, speedMps: 0, accuracyM: 40))
+    // IMU samples from just before that fix arrive after it, already counted with the loose distance.
+    for t in [stopAt - 500, stopAt - 400, stopAt - 300, stopAt - 200] {
+      _ = analyzer.pushImu(mounted(t, x: -6))
+    }
+    XCTAssertEqual(analyzer.getEvents().filter { $0.type == "harsh_brake" }.count, 1)
+    _ = analyzer.pushLocation(snap(stopAt + 1000, 32 + 990 * snapLatPerM, 34, speedMps: 0, accuracyM: 5))
+    let end = driveNorth(analyzer, from: 1002, to: 2010, startT: stopAt + 11000)
+    let session = analyzer.finalize(endedAtMs: end)
+    XCTAssertEqual(session.events.filter { $0.type == "smooth_km" }.map(\.id), ["smooth_km-2"])
+  }
+
+  func testAwardsATakenBackKilometreAgainOnceTheTripReachesIt() {
+    let analyzer = HarshyTripAnalyzer(
+      config: quiet,
+      sessionId: "accuracy-snap-km-again",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    let t = driveTo984m(analyzer)
+    _ = analyzer.pushLocation(snap(t + 2000, 32 + 1010 * snapLatPerM, 34, speedMps: 0, accuracyM: 40))
+    _ = analyzer.pushLocation(snap(t + 3000, 32 + 990 * snapLatPerM, 34, speedMps: 0, accuracyM: 5))
+    let resumed = analyzer.pushLocation(snap(t + 5000, 32 + 1014 * snapLatPerM, 34, speedMps: 12, accuracyM: 5))
+    XCTAssertEqual(resumed.newEvents.map(\.id), ["smooth_km-1"])
+    let session = analyzer.finalize(endedAtMs: t + 6000)
+    XCTAssertEqual(session.events.filter { $0.type == "smooth_km" }.count, 1)
+  }
+
+  /// Drives north at 12 m/s with one 5 m fix per second. Returns the next fix time.
+  private func driveNorth(_ analyzer: HarshyTripAnalyzer, from fromM: Double, to toM: Double, startT: Double) -> Double {
+    var t = startT
+    var metres = fromM
+    while metres <= toM {
+      _ = analyzer.pushLocation(snap(t, 32 + metres * snapLatPerM, 34, speedMps: 12, accuracyM: 5))
+      t += 1000
+      metres += 12
+    }
+    return t
+  }
+
+  /// Drives north at 12 m/s from 0 m to 984 m, one fix per second. Returns the next fix time.
+  private func driveTo984m(_ analyzer: HarshyTripAnalyzer) -> Double {
+    var t = 0.0
+    var metres = 0.0
+    while metres <= 984 {
+      _ = analyzer.pushLocation(snap(t, 32 + metres * snapLatPerM, 34, speedMps: 12, accuracyM: 5))
+      t += 1000
+      metres += 12
+    }
+    return t
   }
 
   func testDropsCoarseNetworkLikeFixWithoutSpeed() {

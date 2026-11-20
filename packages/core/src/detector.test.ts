@@ -55,6 +55,24 @@ function destination(
   return { lat: (lat2 * 180) / Math.PI, lon: (lon2 * 180) / Math.PI };
 }
 
+/** Degrees of latitude per metre on the haversine sphere, as used by the accuracy-snap tests. */
+const SNAP_LAT_PER_M = 0.00089932160592 / 100;
+
+/** Drives north at 12 m/s with one 5 m fix per second. Returns the next fix time. */
+function driveNorth(
+  analyzer: ReturnType<typeof createTripAnalyzer>,
+  fromM: number,
+  toM: number,
+  startT: number,
+): number {
+  let t = startT;
+  for (let metres = fromM; metres <= toM; metres += 12) {
+    analyzer.pushLocation(fix(t, 32 + metres * SNAP_LAT_PER_M, 34, 12, 5));
+    t += 1_000;
+  }
+  return t;
+}
+
 function fix(
   t: number,
   lat: number,
@@ -1287,7 +1305,8 @@ describe("detector", () => {
     expect(session.location).toHaveLength(3);
     expect(session.location.some((sample) => sample.lat === 32.00112415200739)).toBe(false);
     expect(session.location[2]?.accuracyM).toBe(6);
-    expect(session.metrics.distanceM).toBeCloseTo(100, 1);
+    // 100 m driven plus the 8 m from the last moving fix to the corrected stop; the jump is not distance.
+    expect(session.metrics.distanceM).toBeCloseTo(108, 1);
     expect(session.events).toEqual([]);
   });
 
@@ -1302,6 +1321,201 @@ describe("detector", () => {
     const session = analyzer.finalize(2_000);
     expect(session.location).toHaveLength(2);
     expect(session.metrics.distanceM).toBeGreaterThan(20);
+  });
+
+  it("keeps the drive into a stop when a loose stopped fix is corrected", () => {
+    const analyzer = createTripAnalyzer(
+      { harshAccelMps2: 50, harshBrakeMps2: 50, harshCornerMps2: 50 },
+      {
+        sessionId: "accuracy-snap-approach",
+        startedAtMs: 0,
+        device: { platform: "android", model: "test" },
+      },
+    );
+    // Moving fixes at 0 m and 100 m, a loose stopped fix at 140 m, then the stop corrected to 135 m.
+    analyzer.pushLocation(fix(0, 32, 34, 12, 5));
+    analyzer.pushLocation(fix(10_000, 32 + 100 * SNAP_LAT_PER_M, 34, 12, 5));
+    analyzer.pushLocation(fix(13_000, 32 + 140 * SNAP_LAT_PER_M, 34, 0, 40));
+    const corrected = analyzer.pushLocation(fix(14_000, 32 + 135 * SNAP_LAT_PER_M, 34, 0, 5));
+    const session = analyzer.finalize(15_000);
+    expect(corrected.metrics.distanceM).toBeCloseTo(135, 1);
+    expect(session.location).toHaveLength(3);
+    expect(session.metrics.distanceM).toBeCloseTo(135, 1);
+  });
+
+  it("takes back a clean kilometre when a stop correction pulls distance under it", () => {
+    const analyzer = createTripAnalyzer(
+      { harshAccelMps2: 50, harshBrakeMps2: 50, harshCornerMps2: 50 },
+      {
+        sessionId: "accuracy-snap-km",
+        startedAtMs: 0,
+        device: { platform: "android", model: "test" },
+      },
+    );
+    let t = 0;
+    for (let metres = 0; metres <= 984; metres += 12) {
+      analyzer.pushLocation(fix(t, 32 + metres * SNAP_LAT_PER_M, 34, 12, 5));
+      t += 1_000;
+    }
+    const loose = analyzer.pushLocation(fix(t + 2_000, 32 + 1_010 * SNAP_LAT_PER_M, 34, 0, 40));
+    expect(loose.newEvents.map((event) => event.id)).toEqual(["smooth_km-1"]);
+    const corrected = analyzer.pushLocation(fix(t + 3_000, 32 + 990 * SNAP_LAT_PER_M, 34, 0, 5));
+    expect(corrected.metrics.distanceM).toBeCloseTo(990, 1);
+    const session = analyzer.finalize(t + 4_000);
+    expect(session.events.filter((event) => event.type === "smooth_km")).toEqual([]);
+  });
+
+  it("awards a clean kilometre when a stop correction moves distance over it", () => {
+    const analyzer = createTripAnalyzer(
+      { harshAccelMps2: 50, harshBrakeMps2: 50, harshCornerMps2: 50 },
+      {
+        sessionId: "accuracy-snap-km-forward",
+        startedAtMs: 0,
+        device: { platform: "android", model: "test" },
+      },
+    );
+    let t = 0;
+    for (let metres = 0; metres <= 984; metres += 12) {
+      analyzer.pushLocation(fix(t, 32 + metres * SNAP_LAT_PER_M, 34, 12, 5));
+      t += 1_000;
+    }
+    const loose = analyzer.pushLocation(fix(t + 2_000, 32 + 990 * SNAP_LAT_PER_M, 34, 0, 40));
+    expect(loose.newEvents).toEqual([]);
+    const corrected = analyzer.pushLocation(fix(t + 3_000, 32 + 1_010 * SNAP_LAT_PER_M, 34, 0, 5));
+    expect(corrected.metrics.distanceM).toBeCloseTo(1_010, 1);
+    expect(corrected.newEvents.map((event) => event.id)).toEqual(["smooth_km-1"]);
+    const session = analyzer.finalize(t + 4_000);
+    expect(session.events.filter((event) => event.type === "smooth_km")).toHaveLength(1);
+  });
+
+  it("moves a harsh brake at a corrected stop into the kilometre of the corrected stop", () => {
+    const analyzer = createTripAnalyzer(
+      { harshAccelMps2: 50, harshCornerMps2: 50 },
+      {
+        sessionId: "accuracy-snap-km-harsh",
+        startedAtMs: 0,
+        device: { platform: "android", model: "test" },
+      },
+    );
+    let t = 0;
+    for (let metres = 0; metres <= 984; metres += 12) {
+      analyzer.pushLocation(fix(t, 32 + metres * SNAP_LAT_PER_M, 34, 12, 5));
+      t += 1_000;
+    }
+    // Braking hard into a stop: the loose stopped fix lands past 1 km, then corrects to 990 m.
+    const loose = analyzer.pushLocation(fix(t + 2_000, 32 + 1_010 * SNAP_LAT_PER_M, 34, 0, 40));
+    expect(loose.newEvents.map((event) => event.type)).toContain("harsh_brake");
+    analyzer.pushLocation(fix(t + 3_000, 32 + 990 * SNAP_LAT_PER_M, 34, 0, 5));
+    // Drive on past 2 km: the first kilometre had the brake, the second is clean.
+    t += 10_000;
+    for (let metres = 1_002; metres <= 2_010; metres += 12) {
+      analyzer.pushLocation(fix(t, 32 + metres * SNAP_LAT_PER_M, 34, 12, 5));
+      t += 1_000;
+    }
+    const session = analyzer.finalize(t);
+    expect(
+      session.events.filter((event) => event.type === "smooth_km").map((event) => event.id),
+    ).toEqual(["smooth_km-2"]);
+  });
+
+  it("moves a harsh brake again when a corrected stop is corrected a second time", () => {
+    const analyzer = createTripAnalyzer(
+      { harshAccelMps2: 50, harshCornerMps2: 50 },
+      {
+        sessionId: "accuracy-snap-km-harsh-twice",
+        startedAtMs: 0,
+        device: { platform: "android", model: "test" },
+      },
+    );
+    const t = driveNorth(analyzer, 0, 984, 0);
+    const loose = analyzer.pushLocation(fix(t + 2_000, 32 + 1_010 * SNAP_LAT_PER_M, 34, 0, 40));
+    expect(loose.newEvents.map((event) => event.type)).toContain("harsh_brake");
+    const first = analyzer.pushLocation(fix(t + 3_000, 32 + 1_005 * SNAP_LAT_PER_M, 34, 0, 20));
+    expect(first.metrics.distanceM).toBeCloseTo(1_005, 1);
+    const second = analyzer.pushLocation(fix(t + 4_000, 32 + 990 * SNAP_LAT_PER_M, 34, 0, 5));
+    expect(second.metrics.distanceM).toBeCloseTo(990, 1);
+    const end = driveNorth(analyzer, 1_002, 2_010, t + 14_000);
+    const session = analyzer.finalize(end);
+    expect(
+      session.events.filter((event) => event.type === "smooth_km").map((event) => event.id),
+    ).toEqual(["smooth_km-2"]);
+  });
+
+  it("awards a kilometre a correction makes clean after a stopped tail closed it", () => {
+    const analyzer = createTripAnalyzer(
+      { harshAccelMps2: 50, harshCornerMps2: 50 },
+      {
+        sessionId: "accuracy-snap-km-harsh-tail",
+        startedAtMs: 0,
+        device: { platform: "android", model: "test" },
+      },
+    );
+    const t = driveNorth(analyzer, 0, 984, 0);
+    // Braking hard into a loose stop at 990 m, then a second loose stopped fix closes kilometre 1.
+    const brake = analyzer.pushLocation(fix(t + 2_000, 32 + 990 * SNAP_LAT_PER_M, 34, 0, 40));
+    expect(brake.newEvents.map((event) => event.type)).toContain("harsh_brake");
+    const closed = analyzer.pushLocation(fix(t + 3_000, 32 + 1_010 * SNAP_LAT_PER_M, 34, 0, 40));
+    expect(closed.newEvents).toEqual([]);
+    // The stop is really at 1,020 m, so the brake belongs to kilometre 2 and kilometre 1 is clean.
+    const corrected = analyzer.pushLocation(fix(t + 4_000, 32 + 1_020 * SNAP_LAT_PER_M, 34, 0, 5));
+    expect(corrected.metrics.distanceM).toBeCloseTo(1_020, 1);
+    expect(corrected.newEvents.map((event) => event.id)).toEqual(["smooth_km-1"]);
+    const end = driveNorth(analyzer, 1_032, 2_040, t + 14_000);
+    const session = analyzer.finalize(end);
+    expect(
+      session.events.filter((event) => event.type === "smooth_km").map((event) => event.id),
+    ).toEqual(["smooth_km-1"]);
+  });
+
+  it("moves an IMU brake that arrives after a loose stopped fix to the corrected stop", () => {
+    // Only the IMU can call this a harsh brake: the GPS slows at about 3.3 m/s².
+    const analyzer = createTripAnalyzer(
+      { harshAccelMps2: 50, harshBrakeMps2: 5, harshCornerMps2: 50 },
+      {
+        sessionId: "accuracy-snap-km-imu",
+        startedAtMs: 0,
+        device: { platform: "android", model: "test" },
+      },
+    );
+    const slowing = driveNorth(analyzer, 0, 972, 0);
+    analyzer.pushLocation(fix(slowing, 32 + 984 * SNAP_LAT_PER_M, 34, 10, 5));
+    // A mounted phone learns its forward axis while GPS shows the car slowing.
+    analyzer.pushImu(mountedImu(slowing, { x: -3, y: 0, z: 0 }));
+    const stopAt = slowing + 3_000;
+    analyzer.pushLocation(fix(stopAt, 32 + 1_010 * SNAP_LAT_PER_M, 34, 0, 40));
+    // IMU samples from just before that fix arrive after it, already counted with the loose distance.
+    for (const t of [stopAt - 500, stopAt - 400, stopAt - 300, stopAt - 200]) {
+      analyzer.pushImu(mountedImu(t, { x: -6, y: 0, z: 0 }));
+    }
+    expect(analyzer.getEvents().filter((event) => event.type === "harsh_brake")).toHaveLength(1);
+    analyzer.pushLocation(fix(stopAt + 1_000, 32 + 990 * SNAP_LAT_PER_M, 34, 0, 5));
+    const end = driveNorth(analyzer, 1_002, 2_010, stopAt + 11_000);
+    const session = analyzer.finalize(end);
+    expect(
+      session.events.filter((event) => event.type === "smooth_km").map((event) => event.id),
+    ).toEqual(["smooth_km-2"]);
+  });
+
+  it("awards a taken-back kilometre again once the trip reaches it", () => {
+    const analyzer = createTripAnalyzer(
+      { harshAccelMps2: 50, harshBrakeMps2: 50, harshCornerMps2: 50 },
+      {
+        sessionId: "accuracy-snap-km-again",
+        startedAtMs: 0,
+        device: { platform: "android", model: "test" },
+      },
+    );
+    let t = 0;
+    for (let metres = 0; metres <= 984; metres += 12) {
+      analyzer.pushLocation(fix(t, 32 + metres * SNAP_LAT_PER_M, 34, 12, 5));
+      t += 1_000;
+    }
+    analyzer.pushLocation(fix(t + 2_000, 32 + 1_010 * SNAP_LAT_PER_M, 34, 0, 40));
+    analyzer.pushLocation(fix(t + 3_000, 32 + 990 * SNAP_LAT_PER_M, 34, 0, 5));
+    const resumed = analyzer.pushLocation(fix(t + 5_000, 32 + 1_014 * SNAP_LAT_PER_M, 34, 12, 5));
+    expect(resumed.newEvents.map((event) => event.id)).toEqual(["smooth_km-1"]);
+    const session = analyzer.finalize(t + 6_000);
+    expect(session.events.filter((event) => event.type === "smooth_km")).toHaveLength(1);
   });
 
   it("does not treat a GPS speed spike as max speed", () => {

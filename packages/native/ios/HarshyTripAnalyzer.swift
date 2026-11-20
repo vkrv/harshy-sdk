@@ -68,7 +68,13 @@ public final class HarshyTripAnalyzer {
   private var heldSpeedLeap: HarshyLocationSample?
   private var smoothHold: [String: SmoothHold] = [:]
   private var smoothCreditAtM: [String: Double] = [:]
-  private var spoiledKm = Set<Int>()
+  /// The 0-based kilometre of each harsh driving event, and how many fixes were committed when it was marked,
+  /// so a stop correction can move the marks made from the fixes it replaces.
+  private var harshKilometreMarks: [(fix: Int, km: Int)] = []
+  /// 0-based kilometres that closed clean and hold a `smooth_km` event.
+  private var cleanKilometres = Set<Int>()
+  /// Fixes committed to the trip path. A stop correction replaces its tail with one fix.
+  private var fixCount = 0
   private var awardedKm = 0
 
   public init(
@@ -158,6 +164,7 @@ public final class HarshyTripAnalyzer {
       minSpeedMps: config.minSpeedMps
     )
     location.append(stored)
+    fixCount += 1
     HarshyTripBuffer.trimRing(&location, max: HarshyTripBuffer.maxLocationSamples)
     let previousGood = lastGoodLocation
     if locationUsable(stored) {
@@ -250,11 +257,19 @@ public final class HarshyTripAnalyzer {
       previous = point
     }
     distanceM = max(0, distanceM - removedDistance)
+    // Kilometres below this closed before the replaced fixes, so the correction cannot change them.
+    let fromKm = Int(floor(distanceM / 1000))
     if speedCount == 0 {
       speedSum = 0
     }
+    let firstReplacedFix = fixCount - removeCount + 1
+    fixCount = firstReplacedFix
     location.append(stored)
     if locationUsable(stored) {
+      // The drive from the last kept fix to the corrected stop is real; only the loose-to-tight jump is not.
+      if let predecessor {
+        distanceM += harshyHaversineM(predecessor, stored)
+      }
       lastGoodLocation = stored
       if let speed = stored.speedMps, speed.isFinite {
         speedSum += speed
@@ -273,7 +288,14 @@ public final class HarshyTripAnalyzer {
     yawJerkRadps2 = nil
     prevYawRateRadps = nil
     prevYawAtT = nil
-    return HarshyAnalyzerPush(metrics: buildMetrics(stored.t), newEvents: [])
+    moveTailHarshKilometres(firstReplacedFix: firstReplacedFix)
+    let awarded = reconcileCleanKilometres(
+      fromKm: fromKm,
+      t: stored.t,
+      loc: lastGoodLocation,
+      speed: currentSpeed()
+    )
+    return HarshyAnalyzerPush(metrics: buildMetrics(stored.t), newEvents: awarded)
   }
 
   @discardableResult
@@ -374,7 +396,25 @@ public final class HarshyTripAnalyzer {
       type != harshyEventSwerve && type != harshyEventJerk {
       return
     }
-    spoiledKm.insert(Int(floor(distanceM / 1000)))
+    harshKilometreMarks.append((fix: fixCount, km: Int(floor(distanceM / 1000))))
+  }
+
+  private func kilometreSpoiled(_ index: Int) -> Bool {
+    harshKilometreMarks.contains { $0.km == index }
+  }
+
+  /// Marks made once the first replaced fix was committed used the loose tail's distance. Those harsh events
+  /// happened at the corrected stop, so they move to its kilometre and to the corrected fix, which later
+  /// corrections of the same stop replace in turn. Marks are in commit order, so only the end is scanned.
+  private func moveTailHarshKilometres(firstReplacedFix: Int) {
+    let km = Int(floor(distanceM / 1000))
+    for index in harshKilometreMarks.indices.reversed() {
+      if harshKilometreMarks[index].fix < firstReplacedFix {
+        break
+      }
+      harshKilometreMarks[index].fix = fixCount
+      harshKilometreMarks[index].km = km
+    }
   }
 
   private func gpsWindowAccel() -> (
@@ -1112,26 +1152,76 @@ public final class HarshyTripAnalyzer {
     while distanceM >= Double(awardedKm + 1) * 1000 {
       let index = awardedKm
       awardedKm += 1
-      if spoiledKm.contains(index) {
+      if kilometreSpoiled(index) {
         continue
       }
-      let kmNumber = index + 1
-      let points = kmNumber <= 10 ? 2.0 : 1.0
-      let event = HarshyDrivingEvent(
-        id: "smooth_km-\(kmNumber)",
-        type: harshyEventSmoothKm,
-        t: t,
-        peak: points,
-        severity: 0,
-        level: "light",
-        lat: loc?.lat,
-        lon: loc?.lon,
-        speedMps: speed
-      )
-      events.append(event)
-      emitted.append(event)
+      emitted.append(awardCleanKilometre(index: index, t: t, loc: loc, speed: speed))
     }
     return emitted
+  }
+
+  /// A stop correction can change distance and move harsh marks, so kilometres from `fromKm` up are closed
+  /// again from the corrected state: valid awards stay, ones no longer reached or now spoiled are taken back,
+  /// and newly clean ones are awarded. Kilometres below `fromKm` were closed before the replaced fixes.
+  private func reconcileCleanKilometres(
+    fromKm: Int,
+    t: Double,
+    loc: HarshyLocationSample?,
+    speed: Double?
+  ) -> [HarshyDrivingEvent] {
+    let completed = Int(floor(distanceM / 1000))
+    var emitted: [HarshyDrivingEvent] = []
+    let upTo = max(awardedKm, completed)
+    if fromKm < upTo {
+      for index in fromKm..<upTo {
+        let clean = index < completed && !kilometreSpoiled(index)
+        let awarded = cleanKilometres.contains(index)
+        if awarded && !clean {
+          cleanKilometres.remove(index)
+          let id = cleanKilometreId(index)
+          events.removeAll { $0.id == id }
+        } else if !awarded && clean {
+          emitted.append(awardCleanKilometre(index: index, t: t, loc: loc, speed: speed))
+        }
+      }
+    }
+    awardedKm = completed
+    return emitted
+  }
+
+  private func awardCleanKilometre(
+    index: Int,
+    t: Double,
+    loc: HarshyLocationSample?,
+    speed: Double?
+  ) -> HarshyDrivingEvent {
+    let event = cleanKilometreEvent(index: index, t: t, loc: loc, speed: speed)
+    events.append(event)
+    cleanKilometres.insert(index)
+    return event
+  }
+
+  private func cleanKilometreId(_ index: Int) -> String {
+    "smooth_km-\(index + 1)"
+  }
+
+  private func cleanKilometreEvent(
+    index: Int,
+    t: Double,
+    loc: HarshyLocationSample?,
+    speed: Double?
+  ) -> HarshyDrivingEvent {
+    HarshyDrivingEvent(
+      id: cleanKilometreId(index),
+      type: harshyEventSmoothKm,
+      t: t,
+      peak: index + 1 <= 10 ? 2.0 : 1.0,
+      severity: 0,
+      level: "light",
+      lat: loc?.lat,
+      lon: loc?.lon,
+      speedMps: speed
+    )
   }
 
   private func buildMetrics(_ t: Double) -> HarshyLiveMetrics {

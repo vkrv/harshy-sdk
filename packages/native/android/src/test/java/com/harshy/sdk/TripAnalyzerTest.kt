@@ -6,6 +6,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/** Degrees of latitude per metre on the haversine sphere, as used by the accuracy-snap tests. */
+private const val SNAP_LAT_PER_M = 0.00089932160592 / 100
+
 class TripAnalyzerTest {
   private val gravityUp = Vec3(0.0, 0.0, 9.81)
   private val quiet = DetectorConfig(
@@ -388,7 +391,8 @@ class TripAnalyzerTest {
     assertEquals(3, session.location.size)
     assertFalse(session.location.any { it.lat == 32.00112415200739 })
     assertEquals(6.0, session.location[2].accuracyM!!, 0.0)
-    assertEquals(100.0, session.metrics.distanceM, 0.1)
+    // 100 m driven plus the 8 m from the last moving fix to the corrected stop; the jump is not distance.
+    assertEquals(108.0, session.metrics.distanceM, 0.1)
     assertTrue(session.events.isEmpty())
   }
 
@@ -405,6 +409,195 @@ class TripAnalyzerTest {
     val session = analyzer.finalize(2000.0)
     assertEquals(2, session.location.size)
     assertTrue(session.metrics.distanceM > 20.0)
+  }
+
+  @Test
+  fun keepsTheDriveIntoAStopWhenALooseStoppedFixIsCorrected() {
+    val analyzer = TripAnalyzer(
+      quiet,
+      "accuracy-snap-approach",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    // Moving fixes at 0 m and 100 m, a loose stopped fix at 140 m, then the stop corrected to 135 m.
+    analyzer.pushLocation(snap(0.0, 32.0, 34.0, 12.0, 5.0))
+    analyzer.pushLocation(snap(10000.0, 32.0 + 100 * SNAP_LAT_PER_M, 34.0, 12.0, 5.0))
+    analyzer.pushLocation(snap(13000.0, 32.0 + 140 * SNAP_LAT_PER_M, 34.0, 0.0, 40.0))
+    val corrected = analyzer.pushLocation(snap(14000.0, 32.0 + 135 * SNAP_LAT_PER_M, 34.0, 0.0, 5.0))
+    val session = analyzer.finalize(15000.0)
+    assertEquals(135.0, corrected.metrics.distanceM, 0.1)
+    assertEquals(3, session.location.size)
+    assertEquals(135.0, session.metrics.distanceM, 0.1)
+  }
+
+  @Test
+  fun takesBackACleanKilometreWhenAStopCorrectionPullsDistanceUnderIt() {
+    val analyzer = TripAnalyzer(
+      quiet,
+      "accuracy-snap-km",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    val t = driveTo984m(analyzer)
+    val loose = analyzer.pushLocation(snap(t + 2000.0, 32.0 + 1010 * SNAP_LAT_PER_M, 34.0, 0.0, 40.0))
+    assertEquals(listOf("smooth_km-1"), loose.newEvents.map { it.id })
+    val corrected = analyzer.pushLocation(snap(t + 3000.0, 32.0 + 990 * SNAP_LAT_PER_M, 34.0, 0.0, 5.0))
+    assertEquals(990.0, corrected.metrics.distanceM, 0.1)
+    val session = analyzer.finalize(t + 4000.0)
+    assertTrue(session.events.none { it.type == "smooth_km" })
+  }
+
+  @Test
+  fun awardsACleanKilometreWhenAStopCorrectionMovesDistanceOverIt() {
+    val analyzer = TripAnalyzer(
+      quiet,
+      "accuracy-snap-km-forward",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    val t = driveTo984m(analyzer)
+    val loose = analyzer.pushLocation(snap(t + 2000.0, 32.0 + 990 * SNAP_LAT_PER_M, 34.0, 0.0, 40.0))
+    assertTrue(loose.newEvents.isEmpty())
+    val corrected = analyzer.pushLocation(snap(t + 3000.0, 32.0 + 1010 * SNAP_LAT_PER_M, 34.0, 0.0, 5.0))
+    assertEquals(1010.0, corrected.metrics.distanceM, 0.1)
+    assertEquals(listOf("smooth_km-1"), corrected.newEvents.map { it.id })
+    val session = analyzer.finalize(t + 4000.0)
+    assertEquals(1, session.events.count { it.type == "smooth_km" })
+  }
+
+  @Test
+  fun movesAHarshBrakeAtACorrectedStopIntoTheKilometreOfTheCorrectedStop() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig(harshAccelMps2 = 50.0, harshCornerMps2 = 50.0),
+      "accuracy-snap-km-harsh",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    var t = driveTo984m(analyzer)
+    // Braking hard into a stop: the loose stopped fix lands past 1 km, then corrects to 990 m.
+    val loose = analyzer.pushLocation(snap(t + 2000.0, 32.0 + 1010 * SNAP_LAT_PER_M, 34.0, 0.0, 40.0))
+    assertTrue(loose.newEvents.any { it.type == "harsh_brake" })
+    analyzer.pushLocation(snap(t + 3000.0, 32.0 + 990 * SNAP_LAT_PER_M, 34.0, 0.0, 5.0))
+    // Drive on past 2 km: the first kilometre had the brake, the second is clean.
+    t += 10000.0
+    var metres = 1002
+    while (metres <= 2010) {
+      analyzer.pushLocation(snap(t, 32.0 + metres * SNAP_LAT_PER_M, 34.0, 12.0, 5.0))
+      t += 1000.0
+      metres += 12
+    }
+    val session = analyzer.finalize(t)
+    assertEquals(listOf("smooth_km-2"), session.events.filter { it.type == "smooth_km" }.map { it.id })
+  }
+
+  @Test
+  fun movesAHarshBrakeAgainWhenACorrectedStopIsCorrectedASecondTime() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig(harshAccelMps2 = 50.0, harshCornerMps2 = 50.0),
+      "accuracy-snap-km-harsh-twice",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    val t = driveNorth(analyzer, 0, 984, 0.0)
+    val loose = analyzer.pushLocation(snap(t + 2000.0, 32.0 + 1010 * SNAP_LAT_PER_M, 34.0, 0.0, 40.0))
+    assertTrue(loose.newEvents.any { it.type == "harsh_brake" })
+    val first = analyzer.pushLocation(snap(t + 3000.0, 32.0 + 1005 * SNAP_LAT_PER_M, 34.0, 0.0, 20.0))
+    assertEquals(1005.0, first.metrics.distanceM, 0.1)
+    val second = analyzer.pushLocation(snap(t + 4000.0, 32.0 + 990 * SNAP_LAT_PER_M, 34.0, 0.0, 5.0))
+    assertEquals(990.0, second.metrics.distanceM, 0.1)
+    val end = driveNorth(analyzer, 1002, 2010, t + 14000.0)
+    val session = analyzer.finalize(end)
+    assertEquals(listOf("smooth_km-2"), session.events.filter { it.type == "smooth_km" }.map { it.id })
+  }
+
+  @Test
+  fun awardsAKilometreACorrectionMakesCleanAfterAStoppedTailClosedIt() {
+    val analyzer = TripAnalyzer(
+      DetectorConfig(harshAccelMps2 = 50.0, harshCornerMps2 = 50.0),
+      "accuracy-snap-km-harsh-tail",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    val t = driveNorth(analyzer, 0, 984, 0.0)
+    // Braking hard into a loose stop at 990 m, then a second loose stopped fix closes kilometre 1.
+    val brake = analyzer.pushLocation(snap(t + 2000.0, 32.0 + 990 * SNAP_LAT_PER_M, 34.0, 0.0, 40.0))
+    assertTrue(brake.newEvents.any { it.type == "harsh_brake" })
+    val closed = analyzer.pushLocation(snap(t + 3000.0, 32.0 + 1010 * SNAP_LAT_PER_M, 34.0, 0.0, 40.0))
+    assertTrue(closed.newEvents.isEmpty())
+    // The stop is really at 1,020 m, so the brake belongs to kilometre 2 and kilometre 1 is clean.
+    val corrected = analyzer.pushLocation(snap(t + 4000.0, 32.0 + 1020 * SNAP_LAT_PER_M, 34.0, 0.0, 5.0))
+    assertEquals(1020.0, corrected.metrics.distanceM, 0.1)
+    assertEquals(listOf("smooth_km-1"), corrected.newEvents.map { it.id })
+    val end = driveNorth(analyzer, 1032, 2040, t + 14000.0)
+    val session = analyzer.finalize(end)
+    assertEquals(listOf("smooth_km-1"), session.events.filter { it.type == "smooth_km" }.map { it.id })
+  }
+
+  @Test
+  fun movesAnImuBrakeThatArrivesAfterALooseStoppedFixToTheCorrectedStop() {
+    // Only the IMU can call this a harsh brake: the GPS slows at about 3.3 m/s².
+    val analyzer = TripAnalyzer(
+      DetectorConfig(harshAccelMps2 = 50.0, harshBrakeMps2 = 5.0, harshCornerMps2 = 50.0),
+      "accuracy-snap-km-imu",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    val slowing = driveNorth(analyzer, 0, 972, 0.0)
+    analyzer.pushLocation(snap(slowing, 32.0 + 984 * SNAP_LAT_PER_M, 34.0, 10.0, 5.0))
+    // A mounted phone learns its forward axis while GPS shows the car slowing.
+    analyzer.pushImu(mounted(slowing, -3.0))
+    val stopAt = slowing + 3000.0
+    analyzer.pushLocation(snap(stopAt, 32.0 + 1010 * SNAP_LAT_PER_M, 34.0, 0.0, 40.0))
+    // IMU samples from just before that fix arrive after it, already counted with the loose distance.
+    for (t in listOf(stopAt - 500.0, stopAt - 400.0, stopAt - 300.0, stopAt - 200.0)) {
+      analyzer.pushImu(mounted(t, -6.0))
+    }
+    assertEquals(1, analyzer.getEvents().count { it.type == "harsh_brake" })
+    analyzer.pushLocation(snap(stopAt + 1000.0, 32.0 + 990 * SNAP_LAT_PER_M, 34.0, 0.0, 5.0))
+    val end = driveNorth(analyzer, 1002, 2010, stopAt + 11000.0)
+    val session = analyzer.finalize(end)
+    assertEquals(listOf("smooth_km-2"), session.events.filter { it.type == "smooth_km" }.map { it.id })
+  }
+
+  @Test
+  fun awardsATakenBackKilometreAgainOnceTheTripReachesIt() {
+    val analyzer = TripAnalyzer(
+      quiet,
+      "accuracy-snap-km-again",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    val t = driveTo984m(analyzer)
+    analyzer.pushLocation(snap(t + 2000.0, 32.0 + 1010 * SNAP_LAT_PER_M, 34.0, 0.0, 40.0))
+    analyzer.pushLocation(snap(t + 3000.0, 32.0 + 990 * SNAP_LAT_PER_M, 34.0, 0.0, 5.0))
+    val resumed = analyzer.pushLocation(snap(t + 5000.0, 32.0 + 1014 * SNAP_LAT_PER_M, 34.0, 12.0, 5.0))
+    assertEquals(listOf("smooth_km-1"), resumed.newEvents.map { it.id })
+    val session = analyzer.finalize(t + 6000.0)
+    assertEquals(1, session.events.count { it.type == "smooth_km" })
+  }
+
+  /** Drives north at 12 m/s with one 5 m fix per second. Returns the next fix time. */
+  private fun driveNorth(analyzer: TripAnalyzer, fromM: Int, toM: Int, startT: Double): Double {
+    var t = startT
+    var metres = fromM
+    while (metres <= toM) {
+      analyzer.pushLocation(snap(t, 32.0 + metres * SNAP_LAT_PER_M, 34.0, 12.0, 5.0))
+      t += 1000.0
+      metres += 12
+    }
+    return t
+  }
+
+  /** Drives north at 12 m/s from 0 m to 984 m, one fix per second. Returns the next fix time. */
+  private fun driveTo984m(analyzer: TripAnalyzer): Double {
+    var t = 0.0
+    var metres = 0
+    while (metres <= 984) {
+      analyzer.pushLocation(snap(t, 32.0 + metres * SNAP_LAT_PER_M, 34.0, 12.0, 5.0))
+      t += 1000.0
+      metres += 12
+    }
+    return t
   }
 
   @Test

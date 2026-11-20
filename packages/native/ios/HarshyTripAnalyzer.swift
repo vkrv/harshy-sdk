@@ -162,7 +162,7 @@ public final class HarshyTripAnalyzer {
     let previousGood = lastGoodLocation
     if locationUsable(stored) {
       let previous = previousGood
-      if let previous {
+      if let previous, !harshyIsParkedDriveStep(previous, stored, minSpeedMps: config.minSpeedMps) {
         distanceM += harshyHaversineM(previous, stored)
       }
       lastGoodLocation = stored

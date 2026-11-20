@@ -353,6 +353,16 @@ private func harshyStoppedSpeed(_ speedMps: Double?, minSpeedMps: Double) -> Boo
   return speedMps < minSpeedMps
 }
 
+/** Both fixes are parked — GPS wander, not driven distance or a new route vertex. */
+func harshyIsParkedDriveStep(
+  _ from: HarshyLocationSample,
+  _ to: HarshyLocationSample,
+  minSpeedMps: Double = harshyAccuracySnapDefaultMinSpeedMps
+) -> Bool {
+  harshyStoppedSpeed(from.speedMps, minSpeedMps: minSpeedMps)
+    && harshyStoppedSpeed(to.speedMps, minSpeedMps: minSpeedMps)
+}
+
 func harshyIsStationaryAccuracySnap(
   _ anchor: HarshyLocationSample,
   _ sample: HarshyLocationSample,

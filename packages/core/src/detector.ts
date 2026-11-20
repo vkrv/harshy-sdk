@@ -42,6 +42,7 @@ import {
 import { MIN_SPAN_MS, OVER_MARGIN_MPS } from "./roadSpeed.js";
 import { HARSHY_SDK_VERSION } from "./version.js";
 import {
+  isParkedDriveStep,
   isSuspiciousSpeedLeap,
   lastLocationAnchor,
   shouldAcceptDriveFix,
@@ -1727,7 +1728,7 @@ export function createTripAnalyzer(
     trimRingBuffer(state.location, MAX_LOCATION_SAMPLES);
     const prevGood = state.lastGoodLocation;
     if (locationUsable(withRoad, state.config)) {
-      if (prevGood) {
+      if (prevGood && !isParkedDriveStep(prevGood, withRoad, state.config.minSpeedMps)) {
         state.distanceM += haversineM(prevGood, withRoad);
       }
       state.lastGoodLocation = withRoad;

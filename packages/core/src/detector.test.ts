@@ -1233,6 +1233,20 @@ describe("detector", () => {
     expect(session.metrics.distanceM).toBeLessThan(50);
   });
 
+  it("does not count parked GPS wander as trip distance", () => {
+    const analyzer = createTripAnalyzer(undefined, {
+      sessionId: "parked-jitter",
+      startedAtMs: 0,
+      device: { platform: "android", model: "test" },
+    });
+    analyzer.pushLocation(fix(0, 32, 34, 0, 8));
+    analyzer.pushLocation(fix(1_000, 32.00005, 34, 0.3, 8));
+    analyzer.pushLocation(fix(2_000, 32.0001, 34.00005, 0, 7));
+    const session = analyzer.finalize(3_000);
+    expect(session.location.length).toBeGreaterThanOrEqual(2);
+    expect(session.metrics.distanceM).toBeCloseTo(0, 3);
+  });
+
   it("replaces a parked accuracy snap instead of recording the jump", () => {
     const analyzer = createTripAnalyzer(undefined, {
       sessionId: "accuracy-snap",

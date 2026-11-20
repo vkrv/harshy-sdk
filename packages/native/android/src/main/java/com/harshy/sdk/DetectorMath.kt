@@ -291,6 +291,15 @@ private fun stoppedSpeed(speedMps: Double?, minSpeedMps: Double): Boolean {
   return speedMps == null || !speedMps.isFinite() || speedMps < minSpeedMps
 }
 
+/** Both fixes are parked — GPS wander, not driven distance or a new route vertex. */
+internal fun isParkedDriveStep(
+  from: LocationSample,
+  to: LocationSample,
+  minSpeedMps: Double = ACCURACY_SNAP_DEFAULT_MIN_SPEED_MPS,
+): Boolean {
+  return stoppedSpeed(from.speedMps, minSpeedMps) && stoppedSpeed(to.speedMps, minSpeedMps)
+}
+
 internal fun isStationaryAccuracySnap(
   anchor: LocationSample,
   sample: LocationSample,

@@ -323,6 +323,21 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     HarshyLocationSample(t: t, lat: lat, lon: lon, speedMps: speedMps, courseDeg: 0, accuracyM: accuracyM)
   }
 
+  func testDoesNotCountParkedGpsWanderAsTripDistance() {
+    let analyzer = HarshyTripAnalyzer(
+      config: quiet,
+      sessionId: "parked-jitter",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    _ = analyzer.pushLocation(snap(0, 32, 34, speedMps: 0, accuracyM: 8))
+    _ = analyzer.pushLocation(snap(1000, 32.00005, 34, speedMps: 0.3, accuracyM: 8))
+    _ = analyzer.pushLocation(snap(2000, 32.0001, 34.00005, speedMps: 0, accuracyM: 7))
+    let session = analyzer.finalize(endedAtMs: 3000)
+    XCTAssertGreaterThanOrEqual(session.location.count, 2)
+    XCTAssertEqual(session.metrics.distanceM, 0, accuracy: 0.001)
+  }
+
   func testReplacesParkedAccuracySnapInsteadOfRecordingTheJump() {
     let analyzer = HarshyTripAnalyzer(
       config: quiet,

@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   compensateDrivePath,
   isCoarseNetworkLikeFix,
+  isParkedDriveStep,
   isPlausibleDriveStep,
   isStationaryAccuracySnap,
+  isStoppedDriveSpeed,
   isSuspiciousSpeedLeap,
   shouldAcceptDriveFix,
   speedLeapHolds,
@@ -135,6 +137,18 @@ describe("drivePath", () => {
     expect(cleaned.some((p) => p.lat === 59.45)).toBe(false);
     expect(cleaned.some((p) => p.lat === 59.4395306)).toBe(false);
     expect(cleaned.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("treats parked-to-parked steps as GPS wander", () => {
+    const a: DriveFixPoint = { t: 0, lat: 32, lon: 34, speedMps: 0, accuracyM: 8 };
+    const b: DriveFixPoint = { t: 1_000, lat: 32.00005, lon: 34, speedMps: 0.4, accuracyM: 8 };
+    const moving: DriveFixPoint = { t: 2_000, lat: 32.0002, lon: 34, speedMps: 12, accuracyM: 5 };
+    expect(isStoppedDriveSpeed(0, 2)).toBe(true);
+    expect(isStoppedDriveSpeed(null, 2)).toBe(true);
+    expect(isStoppedDriveSpeed(12, 2)).toBe(false);
+    expect(isParkedDriveStep(a, b)).toBe(true);
+    expect(isParkedDriveStep(b, moving)).toBe(false);
+    expect(compensateDrivePath([a, b, moving])).toEqual([a, moving]);
   });
 
   it("collapses a parked accuracy snap onto the tighter fix", () => {

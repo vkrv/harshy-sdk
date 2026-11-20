@@ -348,6 +348,22 @@ class TripAnalyzerTest {
   }
 
   @Test
+  fun doesNotCountParkedGpsWanderAsTripDistance() {
+    val analyzer = TripAnalyzer(
+      quiet,
+      "parked-jitter",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    analyzer.pushLocation(snap(0.0, 32.0, 34.0, 0.0, 8.0))
+    analyzer.pushLocation(snap(1000.0, 32.00005, 34.0, 0.3, 8.0))
+    analyzer.pushLocation(snap(2000.0, 32.0001, 34.00005, 0.0, 7.0))
+    val session = analyzer.finalize(3000.0)
+    assertTrue(session.location.size >= 2)
+    assertEquals(0.0, session.metrics.distanceM, 0.001)
+  }
+
+  @Test
   fun replacesParkedAccuracySnapInsteadOfRecordingTheJump() {
     val analyzer = TripAnalyzer(
       quiet,

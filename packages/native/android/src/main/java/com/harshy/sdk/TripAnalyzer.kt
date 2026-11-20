@@ -159,7 +159,7 @@ class TripAnalyzer(
     val previousGood = lastGoodLocation
     if (locationUsable(stored, config)) {
       val previous = previousGood
-      if (previous != null) {
+      if (previous != null && !isParkedDriveStep(previous, stored, config.minSpeedMps)) {
         distanceM += haversineM(previous, stored)
       }
       lastGoodLocation = stored

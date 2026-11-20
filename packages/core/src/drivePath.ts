@@ -196,8 +196,31 @@ function positiveAccuracy(value: number | null | undefined): value is number {
   return value != null && Number.isFinite(value) && value > 0;
 }
 
-function stoppedSpeed(speedMps: number | null | undefined, minSpeedMps: number): boolean {
+/** Reported speed below the moving gate. Null / non-finite counts as stopped. */
+export function isStoppedDriveSpeed(
+  speedMps: number | null | undefined,
+  minSpeedMps: number,
+): boolean {
   return !finiteSpeed(speedMps) || speedMps < minSpeedMps;
+}
+
+function stoppedSpeed(speedMps: number | null | undefined, minSpeedMps: number): boolean {
+  return isStoppedDriveSpeed(speedMps, minSpeedMps);
+}
+
+/**
+ * Both fixes are parked. Displacement between them is GPS wander — not driven
+ * distance and not a new live-route vertex.
+ */
+export function isParkedDriveStep(
+  from: DriveFixPoint,
+  to: DriveFixPoint,
+  minSpeedMps = ACCURACY_SNAP_DEFAULT_MIN_SPEED_MPS,
+): boolean {
+  return (
+    isStoppedDriveSpeed(from.speedMps, minSpeedMps) &&
+    isStoppedDriveSpeed(to.speedMps, minSpeedMps)
+  );
 }
 
 /**
@@ -374,6 +397,12 @@ export function compensateDrivePath<T extends DriveFixPoint>(
     if (snapTail > 0) {
       kept.splice(kept.length - snapTail, snapTail);
       kept.push(cur);
+      rejects = 0;
+      continue;
+    }
+
+    // Parked GPS wander must not grow the display path (same gate as trip distance).
+    if (isParkedDriveStep(prev, cur, minSpeedMps)) {
       rejects = 0;
       continue;
     }

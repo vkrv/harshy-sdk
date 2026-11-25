@@ -81,7 +81,18 @@ class TripAnalyzer(
   private var heldSpeedLeap: LocationSample? = null
   private val smoothHold = mutableMapOf<String, SmoothHold>()
   private val smoothCreditAtM = mutableMapOf<String, Double>()
-  private val spoiledKm = mutableSetOf<Int>()
+
+  /**
+   * The 0-based kilometre of each harsh driving event, and how many fixes were committed when it was marked,
+   * so a stop correction can move the marks made from the fixes it replaces.
+   */
+  private val harshKilometreMarks = mutableListOf<HarshKilometreMark>()
+
+  /** 0-based kilometres that closed clean and hold a `smooth_km` event. */
+  private val cleanKilometres = mutableSetOf<Int>()
+
+  /** Fixes committed to the trip path. A stop correction replaces its tail with one fix. */
+  private var fixCount = 0
   private var awardedKm = 0
 
   fun setConfig(next: DetectorConfig) {
@@ -155,12 +166,13 @@ class TripAnalyzer(
       ),
     )
     location.add(stored)
+    fixCount += 1
     trimRingBuffer(location, MAX_LOCATION_SAMPLES)
     val previousGood = lastGoodLocation
     if (locationUsable(stored, config)) {
       val previous = previousGood
-      if (previous != null && !isParkedDriveStep(previous, stored, config.minSpeedMps)) {
-        distanceM += haversineM(previous, stored)
+      if (previous != null) {
+        distanceM += drivenStepM(previous, stored)
       }
       lastGoodLocation = stored
       heading = advanceHeadingFilter(
@@ -240,7 +252,7 @@ class TripAnalyzer(
       }
       val prior = previous
       if (prior != null) {
-        removedDistance += haversineM(prior, point)
+        removedDistance += drivenStepM(prior, point)
       }
       val speed = point.speedMps
       if (speed != null && speed.isFinite()) {
@@ -250,11 +262,19 @@ class TripAnalyzer(
       previous = point
     }
     distanceM = max(0.0, distanceM - removedDistance)
+    // Kilometres below this closed before the replaced fixes, so the correction cannot change them.
+    val fromKm = kotlin.math.floor(distanceM / 1000.0).toInt()
     if (speedCount == 0) {
       speedSum = 0.0
     }
+    val firstReplacedFix = fixCount - removeCount + 1
+    fixCount = firstReplacedFix
     location.add(stored)
     if (locationUsable(stored, config)) {
+      // The drive from the last kept fix to the corrected stop is real; only the loose-to-tight jump is not.
+      if (predecessor != null) {
+        distanceM += drivenStepM(predecessor, stored)
+      }
       lastGoodLocation = stored
       val speed = stored.speedMps
       if (speed != null && speed.isFinite()) {
@@ -274,7 +294,9 @@ class TripAnalyzer(
     yawJerkRadps2 = null
     prevYawRateRadps = null
     prevYawAtT = null
-    return AnalyzerPush(metrics = buildMetrics(stored.t), newEvents = emptyList())
+    moveTailHarshKilometres(firstReplacedFix)
+    val awarded = reconcileCleanKilometres(fromKm, stored.t, lastGoodLocation, currentSpeed())
+    return AnalyzerPush(metrics = buildMetrics(stored.t), newEvents = awarded)
   }
 
   fun pushImu(sample: ImuSample): AnalyzerPush {
@@ -313,6 +335,14 @@ class TripAnalyzer(
       trigger = trigger,
       capture = capture,
     )
+  }
+
+  /**
+   * Trip distance for one step between usable fixes. Parked-to-parked displacement is GPS wander, not distance.
+   * A stop correction uses the same rule to take steps back out, so it removes exactly what was added.
+   */
+  private fun drivenStepM(from: LocationSample, to: LocationSample): Double {
+    return if (isParkedDriveStep(from, to, config.minSpeedMps)) 0.0 else haversineM(from, to)
   }
 
   private fun locationUsable(sample: LocationSample, config: DetectorConfig): Boolean {
@@ -391,8 +421,29 @@ class TripAnalyzer(
     ) {
       return
     }
-    spoiledKm.add(kotlin.math.floor(distanceM / 1000.0).toInt())
+    harshKilometreMarks.add(HarshKilometreMark(fixCount, kotlin.math.floor(distanceM / 1000.0).toInt()))
   }
+
+  private fun kilometreSpoiled(index: Int): Boolean = harshKilometreMarks.any { it.km == index }
+
+  /**
+   * Marks made once the first replaced fix was committed used the loose tail's distance. Those harsh events
+   * happened at the corrected stop, so they move to its kilometre and to the corrected fix, which later
+   * corrections of the same stop replace in turn. Marks are in commit order, so only the end is scanned.
+   */
+  private fun moveTailHarshKilometres(firstReplacedFix: Int) {
+    val km = kotlin.math.floor(distanceM / 1000.0).toInt()
+    for (index in harshKilometreMarks.indices.reversed()) {
+      val mark = harshKilometreMarks[index]
+      if (mark.fix < firstReplacedFix) {
+        break
+      }
+      mark.fix = fixCount
+      mark.km = km
+    }
+  }
+
+  private data class HarshKilometreMark(var fix: Int, var km: Int)
 
   private data class GpsAccel(
     val longitudinal: Double?,
@@ -885,26 +936,63 @@ class TripAnalyzer(
     while (distanceM >= (awardedKm + 1) * 1000.0) {
       val index = awardedKm
       awardedKm += 1
-      if (spoiledKm.contains(index)) {
+      if (kilometreSpoiled(index)) {
         continue
       }
-      val kmNumber = index + 1
-      val points = if (kmNumber <= 10) 2.0 else 1.0
-      val event = DrivingEvent(
-        id = "smooth_km-$kmNumber",
-        type = EVENT_SMOOTH_KM,
-        t = t,
-        peak = points,
-        severity = 0.0,
-        level = "light",
-        lat = loc?.lat,
-        lon = loc?.lon,
-        speedMps = speed,
-      )
-      events.add(event)
-      emitted.add(event)
+      emitted.add(awardCleanKilometre(index, t, loc, speed))
     }
     return emitted
+  }
+
+  /**
+   * A stop correction can change distance and move harsh marks, so kilometres from [fromKm] up are closed
+   * again from the corrected state: valid awards stay, ones no longer reached or now spoiled are taken back,
+   * and newly clean ones are awarded. Kilometres below [fromKm] were closed before the replaced fixes.
+   */
+  private fun reconcileCleanKilometres(
+    fromKm: Int,
+    t: Double,
+    loc: LocationSample?,
+    speed: Double?,
+  ): List<DrivingEvent> {
+    val completed = kotlin.math.floor(distanceM / 1000.0).toInt()
+    val emitted = mutableListOf<DrivingEvent>()
+    for (index in fromKm until max(awardedKm, completed)) {
+      val clean = index < completed && !kilometreSpoiled(index)
+      val awarded = cleanKilometres.contains(index)
+      if (awarded && !clean) {
+        cleanKilometres.remove(index)
+        val id = cleanKilometreId(index)
+        events.removeAll { it.id == id }
+      } else if (!awarded && clean) {
+        emitted.add(awardCleanKilometre(index, t, loc, speed))
+      }
+    }
+    awardedKm = completed
+    return emitted
+  }
+
+  private fun awardCleanKilometre(index: Int, t: Double, loc: LocationSample?, speed: Double?): DrivingEvent {
+    val event = cleanKilometreEvent(index, t, loc, speed)
+    events.add(event)
+    cleanKilometres.add(index)
+    return event
+  }
+
+  private fun cleanKilometreId(index: Int): String = "smooth_km-${index + 1}"
+
+  private fun cleanKilometreEvent(index: Int, t: Double, loc: LocationSample?, speed: Double?): DrivingEvent {
+    return DrivingEvent(
+      id = cleanKilometreId(index),
+      type = EVENT_SMOOTH_KM,
+      t = t,
+      peak = if (index + 1 <= 10) 2.0 else 1.0,
+      severity = 0.0,
+      level = "light",
+      lat = loc?.lat,
+      lon = loc?.lon,
+      speedMps = speed,
+    )
   }
 
   private data class SmoothHold(

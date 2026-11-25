@@ -172,8 +172,15 @@ type AnalyzerState = {
   pathOnlyLateral: boolean;
   /** Trip distance when this type last earned a credit. */
   smoothCreditAtM: Partial<Record<SmoothDrivingEventType, number>>;
-  /** 0-based kilometre indexes that contain a harsh driving event. */
-  spoiledKm: Set<number>;
+  /**
+   * The 0-based kilometre of each harsh driving event, and how many fixes were committed when it was marked,
+   * so a stop correction can move the marks made from the fixes it replaces.
+   */
+  harshKilometreMarks: { fix: number; km: number }[];
+  /** 0-based kilometres that closed clean and hold a `smooth_km` event. */
+  cleanKilometres: Set<number>;
+  /** Fixes committed to the trip path. A stop correction replaces its tail with one fix. */
+  fixCount: number;
   /** How many kilometre buckets have already been closed. */
   awardedKm: number;
   openSpeeding: DrivingEvent | null;
@@ -253,7 +260,37 @@ function noteHarshKilometre(state: AnalyzerState, type: DrivingEventType): void 
   if (!KILOMETRE_SPOILERS.has(type)) {
     return;
   }
-  state.spoiledKm.add(Math.floor(state.distanceM / 1000));
+  state.harshKilometreMarks.push({ fix: state.fixCount, km: Math.floor(state.distanceM / 1000) });
+}
+
+function kilometreSpoiled(state: AnalyzerState, index: number): boolean {
+  return state.harshKilometreMarks.some((mark) => mark.km === index);
+}
+
+/**
+ * Marks made once the first replaced fix was committed used the loose tail's distance. Those harsh events
+ * happened at the corrected stop, so they move to its kilometre and to the corrected fix, which later
+ * corrections of the same stop replace in turn. Marks are in commit order, so only the end is scanned.
+ */
+function moveTailHarshKilometres(state: AnalyzerState, firstReplacedFix: number): void {
+  const km = Math.floor(state.distanceM / 1000);
+  const marks = state.harshKilometreMarks;
+  for (let i = marks.length - 1; i >= 0; i -= 1) {
+    const mark = marks[i];
+    if (!mark || mark.fix < firstReplacedFix) {
+      break;
+    }
+    mark.fix = state.fixCount;
+    mark.km = km;
+  }
+}
+
+/**
+ * Trip distance for one step between usable fixes. Parked-to-parked displacement is GPS wander, not distance.
+ * A stop correction uses the same rule to take steps back out, so it removes exactly what was added.
+ */
+function drivenStepM(state: AnalyzerState, from: LocationSample, to: LocationSample): number {
+  return isParkedDriveStep(from, to, state.config.minSpeedMps) ? 0 : haversineM(from, to);
 }
 
 function locationUsable(sample: LocationSample, config: DetectorConfig): boolean {
@@ -973,28 +1010,83 @@ function awardCleanKilometres(
   while (state.distanceM >= (state.awardedKm + 1) * 1000) {
     const index = state.awardedKm;
     state.awardedKm += 1;
-    if (state.spoiledKm.has(index)) {
+    if (kilometreSpoiled(state, index)) {
       continue;
     }
-    const kmNumber = index + 1;
-    const points = kmNumber <= 10 ? 2 : 1;
-    const event: DrivingEvent = {
-      id: `smooth_km-${kmNumber}`,
-      type: "smooth_km",
-      t,
-      endT: null,
-      peak: points,
-      severity: 0,
-      level: "light",
-      lat: location?.lat ?? null,
-      lon: location?.lon ?? null,
-      speedMps: speed,
-      overlaps: [],
-    };
-    state.events.push(event);
-    emitted.push(event);
+    emitted.push(awardCleanKilometre(state, index, t, location, speed));
   }
   return emitted;
+}
+
+/**
+ * A stop correction can change distance and move harsh marks, so kilometres from `fromKm` up are closed
+ * again from the corrected state: valid awards stay, ones no longer reached or now spoiled are taken back,
+ * and newly clean ones are awarded. Kilometres below `fromKm` were closed before the replaced fixes.
+ */
+function reconcileCleanKilometres(
+  state: AnalyzerState,
+  fromKm: number,
+  t: number,
+  location: LocationSample | null,
+  speed: number | null,
+): DrivingEvent[] {
+  const completed = Math.floor(state.distanceM / 1000);
+  const emitted: DrivingEvent[] = [];
+  const upTo = Math.max(state.awardedKm, completed);
+  for (let index = fromKm; index < upTo; index += 1) {
+    const clean = index < completed && !kilometreSpoiled(state, index);
+    const awarded = state.cleanKilometres.has(index);
+    if (awarded && !clean) {
+      state.cleanKilometres.delete(index);
+      const id = cleanKilometreId(index);
+      const at = state.events.findIndex((event) => event.id === id);
+      if (at >= 0) {
+        state.events.splice(at, 1);
+      }
+    } else if (!awarded && clean) {
+      emitted.push(awardCleanKilometre(state, index, t, location, speed));
+    }
+  }
+  state.awardedKm = completed;
+  return emitted;
+}
+
+function awardCleanKilometre(
+  state: AnalyzerState,
+  index: number,
+  t: number,
+  location: LocationSample | null,
+  speed: number | null,
+): DrivingEvent {
+  const event = cleanKilometreEvent(index, t, location, speed);
+  state.events.push(event);
+  state.cleanKilometres.add(index);
+  return event;
+}
+
+function cleanKilometreId(index: number): string {
+  return `smooth_km-${index + 1}`;
+}
+
+function cleanKilometreEvent(
+  index: number,
+  t: number,
+  location: LocationSample | null,
+  speed: number | null,
+): DrivingEvent {
+  return {
+    id: cleanKilometreId(index),
+    type: "smooth_km",
+    t,
+    endT: null,
+    peak: index + 1 <= 10 ? 2 : 1,
+    severity: 0,
+    level: "light",
+    lat: location?.lat ?? null,
+    lon: location?.lon ?? null,
+    speedMps: speed,
+    overlaps: [],
+  };
 }
 
 function smoothMagnitude(
@@ -1660,7 +1752,9 @@ export function createTripAnalyzer(
     harshCornerHold: null,
     pathOnlyLateral: false,
     smoothCreditAtM: {},
-    spoiledKm: new Set(),
+    harshKilometreMarks: [],
+    cleanKilometres: new Set(),
+    fixCount: 0,
     awardedKm: 0,
     openSpeeding: null,
     speedingHoldSinceT: null,
@@ -1725,11 +1819,12 @@ export function createTripAnalyzer(
         }),
     };
     state.location.push(withRoad);
+    state.fixCount += 1;
     trimRingBuffer(state.location, MAX_LOCATION_SAMPLES);
     const prevGood = state.lastGoodLocation;
     if (locationUsable(withRoad, state.config)) {
-      if (prevGood && !isParkedDriveStep(prevGood, withRoad, state.config.minSpeedMps)) {
-        state.distanceM += haversineM(prevGood, withRoad);
+      if (prevGood) {
+        state.distanceM += drivenStepM(state, prevGood, withRoad);
       }
       state.lastGoodLocation = withRoad;
       state.heading = advanceHeadingFilter(
@@ -1824,7 +1919,7 @@ export function createTripAnalyzer(
         continue;
       }
       if (previous) {
-        removedDistance += haversineM(previous, point);
+        removedDistance += drivenStepM(state, previous, point);
       }
       if (point.speedMps != null && Number.isFinite(point.speedMps)) {
         state.speedSum -= point.speedMps;
@@ -1833,11 +1928,19 @@ export function createTripAnalyzer(
       previous = point;
     }
     state.distanceM = Math.max(0, state.distanceM - removedDistance);
+    // Kilometres below this closed before the replaced fixes, so the correction cannot change them.
+    const fromKm = Math.floor(state.distanceM / 1000);
     if (state.speedCount === 0) {
       state.speedSum = 0;
     }
+    const firstReplacedFix = state.fixCount - removeCount + 1;
+    state.fixCount = firstReplacedFix;
     state.location.push(withRoad);
     if (locationUsable(withRoad, state.config)) {
+      // The drive from the last kept fix to the corrected stop is real; only the loose-to-tight jump is not.
+      if (predecessor) {
+        state.distanceM += drivenStepM(state, predecessor, withRoad);
+      }
       state.lastGoodLocation = withRoad;
       if (withRoad.speedMps != null && Number.isFinite(withRoad.speedMps)) {
         state.speedSum += withRoad.speedMps;
@@ -1866,7 +1969,15 @@ export function createTripAnalyzer(
     state.yawJerkRadps2 = null;
     state.prevYawRateRadps = null;
     state.prevYawAtT = null;
-    return { metrics: buildMetrics(state, withRoad.t), newEvents: [] as DrivingEvent[] };
+    moveTailHarshKilometres(state, firstReplacedFix);
+    const awarded = reconcileCleanKilometres(
+      state,
+      fromKm,
+      withRoad.t,
+      state.lastGoodLocation,
+      currentSpeed(state),
+    );
+    return { metrics: buildMetrics(state, withRoad.t), newEvents: awarded };
   };
 
   const pushLocation = (sample: LocationSample) => {

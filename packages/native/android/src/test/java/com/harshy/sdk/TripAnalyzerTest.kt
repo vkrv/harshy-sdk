@@ -428,6 +428,24 @@ class TripAnalyzerTest {
   }
 
   @Test
+  fun addsNoDistanceWhenAFullyParkedStopIsCorrected() {
+    val analyzer = TripAnalyzer(
+      quiet,
+      "accuracy-snap-parked",
+      0.0,
+      DeviceInfo(platform = "android", model = "test"),
+    )
+    // A tight parked fix, a loose parked fix 20 m away, then the stop corrected to 12 m: all wander.
+    analyzer.pushLocation(snap(0.0, 32.0, 34.0, 0.0, 4.0))
+    analyzer.pushLocation(snap(1000.0, 32.0 + 20 * SNAP_LAT_PER_M, 34.0, 0.0, 40.0))
+    val corrected = analyzer.pushLocation(snap(2000.0, 32.0 + 12 * SNAP_LAT_PER_M, 34.0, 0.0, 6.0))
+    val session = analyzer.finalize(3000.0)
+    assertEquals(2, session.location.size)
+    assertEquals(0.0, corrected.metrics.distanceM, 0.001)
+    assertEquals(0.0, session.metrics.distanceM, 0.001)
+  }
+
+  @Test
   fun keepsTheDriveIntoAStopWhenALooseStoppedFixIsCorrected() {
     val analyzer = TripAnalyzer(
       quiet,
@@ -459,6 +477,8 @@ class TripAnalyzerTest {
     assertEquals(listOf("smooth_km-1"), loose.newEvents.map { it.id })
     val corrected = analyzer.pushLocation(snap(t + 3000.0, 32.0 + 990 * SNAP_LAT_PER_M, 34.0, 0.0, 5.0))
     assertEquals(990.0, corrected.metrics.distanceM, 0.1)
+    // Taking the kilometre back also takes back its points.
+    assertTrue(corrected.metrics.points < loose.metrics.points)
     val session = analyzer.finalize(t + 4000.0)
     assertTrue(session.events.none { it.type == "smooth_km" })
   }

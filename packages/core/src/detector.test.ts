@@ -1323,6 +1323,25 @@ describe("detector", () => {
     expect(session.metrics.distanceM).toBeGreaterThan(20);
   });
 
+  it("adds no distance when a fully parked stop is corrected", () => {
+    const analyzer = createTripAnalyzer(
+      { harshAccelMps2: 50, harshBrakeMps2: 50, harshCornerMps2: 50 },
+      {
+        sessionId: "accuracy-snap-parked",
+        startedAtMs: 0,
+        device: { platform: "android", model: "test" },
+      },
+    );
+    // A tight parked fix, a loose parked fix 20 m away, then the stop corrected to 12 m: all wander.
+    analyzer.pushLocation(fix(0, 32, 34, 0, 4));
+    analyzer.pushLocation(fix(1_000, 32 + 20 * SNAP_LAT_PER_M, 34, 0, 40));
+    const corrected = analyzer.pushLocation(fix(2_000, 32 + 12 * SNAP_LAT_PER_M, 34, 0, 6));
+    const session = analyzer.finalize(3_000);
+    expect(session.location).toHaveLength(2);
+    expect(corrected.metrics.distanceM).toBeCloseTo(0, 3);
+    expect(session.metrics.distanceM).toBeCloseTo(0, 3);
+  });
+
   it("keeps the drive into a stop when a loose stopped fix is corrected", () => {
     const analyzer = createTripAnalyzer(
       { harshAccelMps2: 50, harshBrakeMps2: 50, harshCornerMps2: 50 },
@@ -1361,6 +1380,8 @@ describe("detector", () => {
     expect(loose.newEvents.map((event) => event.id)).toEqual(["smooth_km-1"]);
     const corrected = analyzer.pushLocation(fix(t + 3_000, 32 + 990 * SNAP_LAT_PER_M, 34, 0, 5));
     expect(corrected.metrics.distanceM).toBeCloseTo(990, 1);
+    // Taking the kilometre back also takes back its points.
+    expect(corrected.metrics.points).toBeLessThan(loose.metrics.points);
     const session = analyzer.finalize(t + 4_000);
     expect(session.events.filter((event) => event.type === "smooth_km")).toEqual([]);
   });

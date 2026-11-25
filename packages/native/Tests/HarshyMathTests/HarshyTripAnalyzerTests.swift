@@ -399,6 +399,23 @@ final class HarshyTripAnalyzerTests: XCTestCase {
   /// Degrees of latitude per metre on the haversine sphere, as used by the accuracy-snap tests.
   private let snapLatPerM = 0.00089932160592 / 100
 
+  func testAddsNoDistanceWhenAFullyParkedStopIsCorrected() {
+    let analyzer = HarshyTripAnalyzer(
+      config: quiet,
+      sessionId: "accuracy-snap-parked",
+      startedAtMs: 0,
+      device: HarshyDeviceInfo(platform: "ios", model: "test")
+    )
+    // A tight parked fix, a loose parked fix 20 m away, then the stop corrected to 12 m: all wander.
+    _ = analyzer.pushLocation(snap(0, 32, 34, speedMps: 0, accuracyM: 4))
+    _ = analyzer.pushLocation(snap(1000, 32 + 20 * snapLatPerM, 34, speedMps: 0, accuracyM: 40))
+    let corrected = analyzer.pushLocation(snap(2000, 32 + 12 * snapLatPerM, 34, speedMps: 0, accuracyM: 6))
+    let session = analyzer.finalize(endedAtMs: 3000)
+    XCTAssertEqual(session.location.count, 2)
+    XCTAssertEqual(corrected.metrics.distanceM, 0, accuracy: 0.001)
+    XCTAssertEqual(session.metrics.distanceM, 0, accuracy: 0.001)
+  }
+
   func testKeepsTheDriveIntoAStopWhenALooseStoppedFixIsCorrected() {
     let analyzer = HarshyTripAnalyzer(
       config: quiet,
@@ -429,6 +446,8 @@ final class HarshyTripAnalyzerTests: XCTestCase {
     XCTAssertEqual(loose.newEvents.map(\.id), ["smooth_km-1"])
     let corrected = analyzer.pushLocation(snap(t + 3000, 32 + 990 * snapLatPerM, 34, speedMps: 0, accuracyM: 5))
     XCTAssertEqual(corrected.metrics.distanceM, 990, accuracy: 0.1)
+    // Taking the kilometre back also takes back its points.
+    XCTAssertLessThan(corrected.metrics.points, loose.metrics.points)
     let session = analyzer.finalize(endedAtMs: t + 4000)
     XCTAssertFalse(session.events.contains { $0.type == "smooth_km" })
   }

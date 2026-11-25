@@ -169,8 +169,8 @@ public final class HarshyTripAnalyzer {
     let previousGood = lastGoodLocation
     if locationUsable(stored) {
       let previous = previousGood
-      if let previous, !harshyIsParkedDriveStep(previous, stored, minSpeedMps: config.minSpeedMps) {
-        distanceM += harshyHaversineM(previous, stored)
+      if let previous {
+        distanceM += drivenStepM(previous, stored)
       }
       lastGoodLocation = stored
       var headingSample = stored
@@ -248,7 +248,7 @@ public final class HarshyTripAnalyzer {
         continue
       }
       if let prior = previous {
-        removedDistance += harshyHaversineM(prior, point)
+        removedDistance += drivenStepM(prior, point)
       }
       if let speed = point.speedMps, speed.isFinite {
         speedSum -= speed
@@ -268,7 +268,7 @@ public final class HarshyTripAnalyzer {
     if locationUsable(stored) {
       // The drive from the last kept fix to the corrected stop is real; only the loose-to-tight jump is not.
       if let predecessor {
-        distanceM += harshyHaversineM(predecessor, stored)
+        distanceM += drivenStepM(predecessor, stored)
       }
       lastGoodLocation = stored
       if let speed = stored.speedMps, speed.isFinite {
@@ -335,6 +335,12 @@ public final class HarshyTripAnalyzer {
       trigger: trigger,
       capture: capture
     )
+  }
+
+  /// Trip distance for one step between usable fixes. Parked-to-parked displacement is GPS wander, not distance.
+  /// A stop correction uses the same rule to take steps back out, so it removes exactly what was added.
+  private func drivenStepM(_ from: HarshyLocationSample, _ to: HarshyLocationSample) -> Double {
+    harshyIsParkedDriveStep(from, to, minSpeedMps: config.minSpeedMps) ? 0 : harshyHaversineM(from, to)
   }
 
   private func locationUsable(_ sample: HarshyLocationSample) -> Bool {

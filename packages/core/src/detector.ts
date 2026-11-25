@@ -285,6 +285,14 @@ function moveTailHarshKilometres(state: AnalyzerState, firstReplacedFix: number)
   }
 }
 
+/**
+ * Trip distance for one step between usable fixes. Parked-to-parked displacement is GPS wander, not distance.
+ * A stop correction uses the same rule to take steps back out, so it removes exactly what was added.
+ */
+function drivenStepM(state: AnalyzerState, from: LocationSample, to: LocationSample): number {
+  return isParkedDriveStep(from, to, state.config.minSpeedMps) ? 0 : haversineM(from, to);
+}
+
 function locationUsable(sample: LocationSample, config: DetectorConfig): boolean {
   return sample.accuracyM == null || sample.accuracyM <= config.maxLocationAccuracyM;
 }
@@ -1815,8 +1823,8 @@ export function createTripAnalyzer(
     trimRingBuffer(state.location, MAX_LOCATION_SAMPLES);
     const prevGood = state.lastGoodLocation;
     if (locationUsable(withRoad, state.config)) {
-      if (prevGood && !isParkedDriveStep(prevGood, withRoad, state.config.minSpeedMps)) {
-        state.distanceM += haversineM(prevGood, withRoad);
+      if (prevGood) {
+        state.distanceM += drivenStepM(state, prevGood, withRoad);
       }
       state.lastGoodLocation = withRoad;
       state.heading = advanceHeadingFilter(
@@ -1911,7 +1919,7 @@ export function createTripAnalyzer(
         continue;
       }
       if (previous) {
-        removedDistance += haversineM(previous, point);
+        removedDistance += drivenStepM(state, previous, point);
       }
       if (point.speedMps != null && Number.isFinite(point.speedMps)) {
         state.speedSum -= point.speedMps;
@@ -1931,7 +1939,7 @@ export function createTripAnalyzer(
     if (locationUsable(withRoad, state.config)) {
       // The drive from the last kept fix to the corrected stop is real; only the loose-to-tight jump is not.
       if (predecessor) {
-        state.distanceM += haversineM(predecessor, withRoad);
+        state.distanceM += drivenStepM(state, predecessor, withRoad);
       }
       state.lastGoodLocation = withRoad;
       if (withRoad.speedMps != null && Number.isFinite(withRoad.speedMps)) {

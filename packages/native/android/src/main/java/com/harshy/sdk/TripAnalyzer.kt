@@ -171,8 +171,8 @@ class TripAnalyzer(
     val previousGood = lastGoodLocation
     if (locationUsable(stored, config)) {
       val previous = previousGood
-      if (previous != null && !isParkedDriveStep(previous, stored, config.minSpeedMps)) {
-        distanceM += haversineM(previous, stored)
+      if (previous != null) {
+        distanceM += drivenStepM(previous, stored)
       }
       lastGoodLocation = stored
       heading = advanceHeadingFilter(
@@ -252,7 +252,7 @@ class TripAnalyzer(
       }
       val prior = previous
       if (prior != null) {
-        removedDistance += haversineM(prior, point)
+        removedDistance += drivenStepM(prior, point)
       }
       val speed = point.speedMps
       if (speed != null && speed.isFinite()) {
@@ -273,7 +273,7 @@ class TripAnalyzer(
     if (locationUsable(stored, config)) {
       // The drive from the last kept fix to the corrected stop is real; only the loose-to-tight jump is not.
       if (predecessor != null) {
-        distanceM += haversineM(predecessor, stored)
+        distanceM += drivenStepM(predecessor, stored)
       }
       lastGoodLocation = stored
       val speed = stored.speedMps
@@ -335,6 +335,14 @@ class TripAnalyzer(
       trigger = trigger,
       capture = capture,
     )
+  }
+
+  /**
+   * Trip distance for one step between usable fixes. Parked-to-parked displacement is GPS wander, not distance.
+   * A stop correction uses the same rule to take steps back out, so it removes exactly what was added.
+   */
+  private fun drivenStepM(from: LocationSample, to: LocationSample): Double {
+    return if (isParkedDriveStep(from, to, config.minSpeedMps)) 0.0 else haversineM(from, to)
   }
 
   private fun locationUsable(sample: LocationSample, config: DetectorConfig): Boolean {
